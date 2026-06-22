@@ -4,6 +4,16 @@ let endPoint = null;
 let routeLayer = null;
 let routeMarkerLayer = null;
 let currentDestinationLabel = '';
+let activeRoute = null;
+let navigationWatchId = null;
+let isNavigating = false;
+let followUser = true;
+let lastNavPosition = null;
+let lastRerouteAt = 0;
+
+const OFF_ROUTE_METERS = 60;
+const REROUTE_COOLDOWN_MS = 20000;
+const ARRIVAL_METERS = 25;
 
 
 const routePanel = () => $('routePanel');
@@ -14,6 +24,13 @@ const routeDetails      = () => $('routeDetails');
 const routeStepsEl      = () => $('routeSteps');
 const routeDistanceEl   = () => $('routeDistance');
 const routeDurationEl   = () => $('routeDuration');
+const navigationCard    = () => $('navigationCard');
+const nextDistanceEl    = () => $('nextDistance');
+const nextInstructionEl = () => $('nextInstruction');
+const navStatusEl       = () => $('navStatus');
+const startNavBtn       = () => $('startNavBtn');
+const stopNavBtn        = () => $('stopNavBtn');
+const recenterNavBtn    = () => $('recenterNavBtn');
 
 function openRoutePanel() {
   const p = routePanel();
@@ -40,6 +57,24 @@ function initRouting() {
 
   const clearBtn = $('clearRouteBtn');
   if (clearBtn) clearBtn.addEventListener('click', clearRoute);
+
+  const startBtn = startNavBtn();
+  if (startBtn) startBtn.addEventListener('click', startNavigation);
+
+  const stopBtn = stopNavBtn();
+  if (stopBtn) stopBtn.addEventListener('click', () => stopNavigation(false));
+
+  const recenterBtn = recenterNavBtn();
+  if (recenterBtn) recenterBtn.addEventListener('click', recenterNavigation);
+
+  if (typeof map !== 'undefined' && map) {
+    map.on('dragstart', () => {
+      if (isNavigating) {
+        followUser = false;
+        updateNavStatus('Đã tạm dừng tự bám bản đồ. Bấm căn giữa để tiếp tục.');
+      }
+    });
+  }
 
   // cho phép nhập tọa độ tay vào ô "Đến"
   const endInp = endAddressInput();
@@ -87,6 +122,7 @@ function tryAutoRoute() {
 }
 
 async function findRoute() {
+  const options = arguments[0] && !arguments[0].preventDefault ? arguments[0] : {};
   if (!startPoint || !endPoint) {
     showToast('Thiếu điểm xuất phát hoặc điểm đến');
     if (!startPoint && typeof locateUser === 'function') locateUser(true);
@@ -94,20 +130,15 @@ async function findRoute() {
   }
   const btn = findRouteBtn();
   if (!btn) return;
-  btn.disabled = true;
+  if (!options.silent) btn.disabled = true;
   const original = btn.innerHTML;
-  btn.innerHTML = 'Đang tìm đường…';
-
-  const start = startPoint[1] + ',' + startPoint[0];
-  const end   = endPoint[1]   + ',' + endPoint[0];
-  const url = 'https://router.project-osrm.org/route/v1/driving/' + start + ';' + end +
-              '?steps=true&geometries=geojson&overview=full&alternatives=false&continue_straight=default';
+  if (!options.silent) btn.innerHTML = 'Đang tìm đường…';
 
   try {
-    const r = await fetch(url);
-    const data = await r.json();
-    if (data.routes && data.routes.length) {
-      displayRoute(data.routes[0]);
+    const route = await requestRoute(startPoint, endPoint);
+    if (route) {
+      displayRoute(route, { fit: !options.keepView, silent: options.silent });
+      return route;
     } else {
       showFallbackRoute();
       showToast('Không tìm thấy đường theo dữ liệu đường bộ, đang vẽ tuyến tham khảo');
@@ -118,12 +149,23 @@ async function findRoute() {
     showToast('Lỗi máy chủ định tuyến, đang vẽ tuyến tham khảo');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = original;
+    if (!options.silent) btn.innerHTML = original;
     updateRouteBtnState();
   }
 }
 
-function displayRoute(route) {
+async function requestRoute(startLatLng, endLatLng) {
+  const start = startLatLng[1] + ',' + startLatLng[0];
+  const end = endLatLng[1] + ',' + endLatLng[0];
+  const url = 'https://router.project-osrm.org/route/v1/driving/' + start + ';' + end +
+              '?steps=true&geometries=geojson&overview=full&alternatives=false&continue_straight=default';
+  const r = await fetch(url);
+  const data = await r.json();
+  return data.routes && data.routes.length ? data.routes[0] : null;
+}
+
+function displayRoute(route, options) {
+  options = options || {};
   clearRouteLayers();
 
   const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
@@ -137,25 +179,30 @@ function displayRoute(route) {
 
   renderRouteMarkers();
 
-  map.fitBounds(routeLayer.getBounds(), { padding: [70, 70] });
+  if (options.fit !== false) {
+    fitRouteBounds(routeLayer.getBounds());
+  }
 
   const distance = (route.distance / 1000).toFixed(2);
   const duration = Math.round(route.duration / 60);
   routeDistanceEl().textContent = distance + ' km';
   routeDurationEl().textContent = duration + ' phút';
+  activeRoute = normalizeRoute(route, coords);
 
   let stepsHTML = '';
-  let i = 1;
-  route.legs.forEach(leg => {
-    leg.steps.forEach(step => {
-      const instr = instructionFromStep(step);
-      const d = (step.distance / 1000).toFixed(2);
-      stepsHTML += '<div class="step"><strong>Bước ' + i + ':</strong> ' + instr + ' (' + d + ' km)</div>';
-      i++;
-    });
+  activeRoute.steps.forEach((step, index) => {
+    stepsHTML += '<div class="step" data-step-index="' + index + '"><strong>Bước ' + (index + 1) + ':</strong> ' +
+      escapeHtmlRoute(step.instruction) + ' (' + formatDistance(step.distance) + ')</div>';
   });
   routeStepsEl().innerHTML = stepsHTML;
   routeDetails().hidden = false;
+  if (navigationCard()) navigationCard().hidden = false;
+  updateNavigationPreview();
+  updateNavigationButtons();
+
+  if (isNavigating) {
+    updateNavStatus(options.silent ? 'Đã tính lại tuyến đường.' : 'Đang dẫn đường.');
+  }
 }
 
 function showFallbackRoute() {
@@ -171,13 +218,17 @@ function showFallbackRoute() {
   }).addTo(map);
 
   renderRouteMarkers();
-  map.fitBounds(routeLayer.getBounds(), { padding: [70, 70] });
+  fitRouteBounds(routeLayer.getBounds());
 
   const distanceKm = distanceBetween(startPoint, endPoint);
   routeDistanceEl().textContent = distanceKm.toFixed(2) + ' km';
   routeDurationEl().textContent = 'Tham khảo';
   routeStepsEl().innerHTML = '<div class="step"><strong>Tuyến tham khảo:</strong> Không có dữ liệu đường bộ phù hợp, app đang nối trực tiếp từ vị trí hiện tại tới điểm đến.</div>';
   routeDetails().hidden = false;
+  if (navigationCard()) navigationCard().hidden = false;
+  activeRoute = buildFallbackRoute();
+  updateNavigationPreview();
+  updateNavigationButtons();
 }
 
 function renderRouteMarkers() {
@@ -185,6 +236,21 @@ function renderRouteMarkers() {
     L.circleMarker(startPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#4ade80', fillOpacity: 1 }),
     L.circleMarker(endPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#ff5b5b', fillOpacity: 1 })
   ]).addTo(map);
+}
+
+function fitRouteBounds(bounds) {
+  if (!bounds || !bounds.isValid || !bounds.isValid()) return;
+  if (window.innerWidth > 640) {
+    map.fitBounds(bounds, {
+      paddingTopLeft: [390, 80],
+      paddingBottomRight: [90, 90]
+    });
+  } else {
+    map.fitBounds(bounds, {
+      paddingTopLeft: [36, 70],
+      paddingBottomRight: [36, 260]
+    });
+  }
 }
 
 function clearRouteLayers() {
@@ -199,13 +265,268 @@ function clearRouteLayers() {
 }
 
 function clearRoute() {
+  stopNavigation(false);
   clearRouteLayers();
   endPoint = null;
   currentDestinationLabel = '';
+  activeRoute = null;
   const endInp = endAddressInput();
   if (endInp) endInp.value = '';
   routeDetails().hidden = true;
   updateRouteBtnState();
+}
+
+function startNavigation() {
+  if (!activeRoute || !endPoint) {
+    showToast('Hãy tìm đường trước khi bắt đầu dẫn đường');
+    return;
+  }
+  if (!('geolocation' in navigator)) {
+    showToast('Trình duyệt không hỗ trợ định vị realtime');
+    return;
+  }
+
+  if (navigationWatchId !== null) {
+    navigator.geolocation.clearWatch(navigationWatchId);
+    navigationWatchId = null;
+  }
+
+  isNavigating = true;
+  followUser = true;
+  updateNavigationButtons();
+  updateNavStatus('Đang bắt tín hiệu GPS...');
+
+  navigationWatchId = navigator.geolocation.watchPosition(
+    onNavigationPosition,
+    onNavigationError,
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 1000 }
+  );
+}
+
+function stopNavigation(arrived) {
+  if (navigationWatchId !== null && 'geolocation' in navigator) {
+    navigator.geolocation.clearWatch(navigationWatchId);
+    navigationWatchId = null;
+  }
+  isNavigating = false;
+  followUser = true;
+  updateNavigationButtons();
+  if (arrived) {
+    updateNavStatus('Đã đến gần điểm đích.');
+    showToast('Bạn đã đến gần điểm đích');
+  } else if (activeRoute) {
+    updateNavStatus('Đã dừng dẫn đường.');
+  }
+}
+
+function onNavigationError(err) {
+  console.warn(err);
+  const msg = err.code === 1 ? 'Bạn đã từ chối quyền vị trí' : 'GPS chưa ổn định, đang thử lại...';
+  updateNavStatus(msg);
+  showToast(msg);
+}
+
+function onNavigationPosition(pos) {
+  const { latitude, longitude, accuracy, heading } = pos.coords;
+  const latlng = [latitude, longitude];
+  const computedHeading = getNavigationHeading(latlng, heading);
+
+  startPoint = latlng;
+  if (typeof setUserPosition === 'function') {
+    setUserPosition(latlng, accuracy, followUser, computedHeading, true);
+  }
+  updateRouteBtnState();
+
+  if (!activeRoute) return;
+
+  const projection = projectOnRoute(latlng, activeRoute);
+  const remaining = Math.max(0, activeRoute.totalDistance - projection.along);
+  const currentStep = getCurrentStep(projection.along);
+
+  updateNavigationCard(currentStep, remaining, projection.distance, accuracy);
+  highlightCurrentStep(currentStep);
+
+  if (remaining <= ARRIVAL_METERS) {
+    stopNavigation(true);
+    return;
+  }
+
+  if (projection.distance > OFF_ROUTE_METERS) {
+    maybeReroute(projection.distance);
+  }
+}
+
+function getNavigationHeading(latlng, gpsHeading) {
+  if (Number.isFinite(gpsHeading) && gpsHeading >= 0) {
+    lastNavPosition = latlng;
+    return gpsHeading;
+  }
+
+  if (!lastNavPosition) {
+    lastNavPosition = latlng;
+    return null;
+  }
+
+  const moved = distanceBetween(lastNavPosition, latlng) * 1000;
+  if (moved < 3) return null;
+
+  const heading = bearingBetween(lastNavPosition, latlng);
+  lastNavPosition = latlng;
+  return heading;
+}
+
+function maybeReroute(distanceFromRoute) {
+  const now = Date.now();
+  if (now - lastRerouteAt < REROUTE_COOLDOWN_MS) {
+    updateNavStatus('Bạn đang lệch tuyến khoảng ' + Math.round(distanceFromRoute) + ' m.');
+    return;
+  }
+
+  lastRerouteAt = now;
+  updateNavStatus('Đang tính lại tuyến đường...');
+  findRoute({ silent: true, keepView: true }).catch(() => {
+    updateNavStatus('Chưa tính lại được tuyến, tiếp tục theo tuyến cũ.');
+  });
+}
+
+function recenterNavigation() {
+  followUser = true;
+  if (startPoint && typeof map !== 'undefined' && map) {
+    map.flyTo(startPoint, Math.max(map.getZoom(), 17), { animate: true, duration: 0.45 });
+  }
+  updateNavStatus(isNavigating ? 'Đang bám theo vị trí của bạn.' : 'Đã căn giữa vị trí.');
+}
+
+function normalizeRoute(route, coords) {
+  const cumulative = buildCumulativeDistances(coords);
+  const steps = [];
+  let accumulated = 0;
+
+  route.legs.forEach(leg => {
+    leg.steps.forEach(step => {
+      const distance = step.distance || 0;
+      steps.push({
+        instruction: instructionFromStep(step),
+        distance,
+        startDistance: accumulated,
+        endDistance: accumulated + distance
+      });
+      accumulated += distance;
+    });
+  });
+
+  return {
+    coords,
+    cumulative,
+    totalDistance: route.distance || cumulative[cumulative.length - 1] || 0,
+    steps
+  };
+}
+
+function buildFallbackRoute() {
+  const coords = [startPoint, endPoint];
+  const distance = distanceBetween(startPoint, endPoint) * 1000;
+  return {
+    coords,
+    cumulative: buildCumulativeDistances(coords),
+    totalDistance: distance,
+    steps: [{
+      instruction: 'Đi tới điểm đích theo tuyến tham khảo',
+      distance,
+      startDistance: 0,
+      endDistance: distance
+    }]
+  };
+}
+
+function buildCumulativeDistances(coords) {
+  const cumulative = [0];
+  for (let i = 1; i < coords.length; i++) {
+    cumulative[i] = cumulative[i - 1] + L.latLng(coords[i - 1][0], coords[i - 1][1]).distanceTo(L.latLng(coords[i][0], coords[i][1]));
+  }
+  return cumulative;
+}
+
+function projectOnRoute(latlng, route) {
+  if (!route || !route.coords.length) return { distance: Infinity, along: 0 };
+  if (route.coords.length === 1) {
+    return { distance: L.latLng(latlng[0], latlng[1]).distanceTo(L.latLng(route.coords[0][0], route.coords[0][1])), along: 0 };
+  }
+
+  const p = toMercator(latlng);
+  let bestDistance = Infinity;
+  let bestAlong = 0;
+
+  for (let i = 1; i < route.coords.length; i++) {
+    const a = toMercator(route.coords[i - 1]);
+    const b = toMercator(route.coords[i]);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+    const projection = { x: a.x + t * dx, y: a.y + t * dy };
+    const distance = Math.hypot(p.x - projection.x, p.y - projection.y);
+
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      const segmentDistance = (route.cumulative[i] || 0) - (route.cumulative[i - 1] || 0);
+      bestAlong = (route.cumulative[i - 1] || 0) + segmentDistance * t;
+    }
+  }
+
+  return { distance: bestDistance, along: bestAlong };
+}
+
+function toMercator(latlng) {
+  const lat = Array.isArray(latlng) ? latlng[0] : latlng.lat;
+  const lng = Array.isArray(latlng) ? latlng[1] : latlng.lng;
+  const r = 6378137;
+  const x = r * lng * Math.PI / 180;
+  const y = r * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+  return { x, y };
+}
+
+function getCurrentStep(along) {
+  if (!activeRoute || !activeRoute.steps.length) return null;
+  return activeRoute.steps.find(step => step.endDistance >= along + 5) || activeRoute.steps[activeRoute.steps.length - 1];
+}
+
+function updateNavigationPreview() {
+  if (!activeRoute || !activeRoute.steps.length) return;
+  const step = activeRoute.steps[0];
+  if (nextInstructionEl()) nextInstructionEl().textContent = step.instruction;
+  if (nextDistanceEl()) nextDistanceEl().textContent = formatDistance(step.distance);
+  updateNavStatus('Bấm bắt đầu để theo dõi vị trí realtime.');
+}
+
+function updateNavigationCard(step, remaining, offRouteDistance, accuracy) {
+  if (!step) return;
+  if (nextInstructionEl()) nextInstructionEl().textContent = step.instruction;
+  if (nextDistanceEl()) nextDistanceEl().textContent = formatDistance(Math.max(0, step.endDistance - (activeRoute.totalDistance - remaining)));
+
+  const parts = ['Còn ' + formatDistance(remaining)];
+  if (accuracy) parts.push('GPS ±' + Math.round(accuracy) + ' m');
+  if (offRouteDistance > OFF_ROUTE_METERS) parts.push('lệch tuyến ' + Math.round(offRouteDistance) + ' m');
+  updateNavStatus(parts.join(' • '));
+}
+
+function highlightCurrentStep(step) {
+  if (!step || !routeStepsEl()) return;
+  const index = activeRoute.steps.indexOf(step);
+  routeStepsEl().querySelectorAll('.step').forEach(el => {
+    el.classList.toggle('step--active', Number(el.dataset.stepIndex) === index);
+  });
+}
+
+function updateNavigationButtons() {
+  const startBtn = startNavBtn();
+  const stopBtn = stopNavBtn();
+  if (startBtn) startBtn.hidden = isNavigating || !activeRoute;
+  if (stopBtn) stopBtn.hidden = !isNavigating;
+}
+
+function updateNavStatus(text) {
+  if (navStatusEl()) navStatusEl().textContent = text;
 }
 
 function instructionFromStep(step) {
@@ -239,8 +560,28 @@ function distanceBetween(a, b) {
   return p1.distanceTo(p2) / 1000;
 }
 
+function bearingBetween(a, b) {
+  const lat1 = a[0] * Math.PI / 180;
+  const lat2 = b[0] * Math.PI / 180;
+  const dLng = (b[1] - a[1]) * Math.PI / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
 function formatRouteLatLng(latlng) {
   return Number(latlng[0]).toFixed(5) + ', ' + Number(latlng[1]).toFixed(5);
+}
+
+function formatDistance(meters) {
+  if (!Number.isFinite(meters)) return '—';
+  if (meters < 1000) return Math.max(0, Math.round(meters)) + ' m';
+  return (meters / 1000).toFixed(meters < 10000 ? 1 : 0) + ' km';
+}
+
+function escapeHtmlRoute(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 

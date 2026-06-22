@@ -122,6 +122,23 @@ html, body {
   border-radius: 4px !important;
 }
 .leaflet-control-attribution a { color: var(--accent) !important; }
+.leaflet-control-layers {
+  background: rgba(17, 26, 44, 0.95) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--shadow) !important;
+}
+.leaflet-control-layers-toggle {
+  filter: invert(1) opacity(0.86);
+}
+.leaflet-control-layers-expanded {
+  padding: 10px 12px !important;
+}
+.leaflet-control-layers label {
+  font-size: 12px;
+  line-height: 1.8;
+}
 
 /* ====== LOADING ====== */
 .loading-overlay {
@@ -301,7 +318,13 @@ html, body {
 }
 .route-panel__head h2 { font-size: 15px; font-weight: 600; }
 .route-panel__sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.route-panel__body { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.route-panel__body {
+  padding: 14px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
 
 .route-row { display: flex; align-items: center; gap: 12px; }
 .route-dot {
@@ -354,6 +377,39 @@ html, body {
   border-top: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 12px;
 }
+.navigation-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: linear-gradient(135deg, rgba(79,140,255,0.22), rgba(24,35,58,0.94));
+  border: 1px solid rgba(79,140,255,0.28);
+  border-radius: 10px;
+}
+.navigation-card__distance {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.navigation-card h3 {
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.25;
+  font-weight: 750;
+  margin-bottom: 3px;
+}
+.navigation-card p {
+  color: rgba(232,238,247,0.76);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.navigation-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
 .route-meta { display: flex; gap: 10px; }
 .route-meta span {
   flex: 1;
@@ -380,14 +436,44 @@ html, body {
   line-height: 1.4;
 }
 .step strong { color: var(--text); }
+.step--active {
+  color: var(--text);
+  background: rgba(79,140,255,0.14);
+  border-color: rgba(79,140,255,0.35);
+}
 
 /* ====== LOCATION MARKER ====== */
+.user-marker-wrap {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: 50% 50%;
+}
 .user-marker {
-  width: 16px; height: 16px;
+  width: 18px; height: 18px;
   background: var(--primary);
   border: 3px solid #fff;
   border-radius: 50%;
   box-shadow: 0 0 0 6px rgba(79,140,255,0.25), 0 2px 6px rgba(0,0,0,0.4);
+  position: relative;
+}
+.user-marker::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -13px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 13px solid #fff;
+  transform: translateX(-50%);
+  opacity: 0;
+}
+.user-marker--heading::after {
+  opacity: 1;
 }
 
 .selected-landmark {
@@ -443,6 +529,7 @@ html, body {
   .route-panel {
     top: 72px; left: 12px;
     width: 340px;
+    max-height: calc(100vh - 92px);
     border-radius: 14px;
     transform: translateX(-120%);
   }

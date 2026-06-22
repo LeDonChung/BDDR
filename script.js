@@ -10,6 +10,7 @@ let kmlFeatures = [];
 let kmlLoaded = false;
 let kmlRenderTimer = null;
 let kmlRenderJob = 0;
+let currentBaseLayer = null;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
@@ -20,6 +21,18 @@ const FEATURE_CLICK_TOLERANCE_PX = 18;
 const $ = (id) => document.getElementById(id);
 
 // ===== TILE LAYERS =====
+const osmLayer = L.tileLayer(
+  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19,
+    minZoom: 2,
+    updateWhenZooming: false,
+    updateWhenIdle: true,
+    keepBuffer: 3
+  }
+);
+
 const satelliteLayer = L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   {
@@ -48,7 +61,20 @@ function initMap() {
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX
   });
 
-  satelliteLayer.addTo(map);
+  currentBaseLayer = osmLayer;
+  currentBaseLayer.addTo(map);
+
+  L.control.layers(
+    {
+      'Đường phố OSM': osmLayer,
+      'Vệ tinh Esri': satelliteLayer
+    },
+    null,
+    {
+      position: 'bottomright',
+      collapsed: true
+    }
+  ).addTo(map);
 
   map.on('moveend zoomend', scheduleVisibleKMLRender);
   map.on('click', onMapBackgroundClick);
@@ -576,15 +602,18 @@ function locateUser(pan) {  if (pan === undefined) pan = true;
   );
 }
 
-function setUserPosition(latlng, accuracy, pan) {
+function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
   if (userMarker) map.removeLayer(userMarker);
   if (userAccuracyCircle) map.removeLayer(userAccuracyCircle);
 
+  const hasHeading = Number.isFinite(heading);
+  const rotation = hasHeading ? ' style="transform: rotate(' + heading.toFixed(0) + 'deg)"' : '';
+  const markerClass = 'user-marker' + (hasHeading ? ' user-marker--heading' : '');
   const icon = L.divIcon({
     className: '',
-    html: '<div class="user-marker"></div>',
-    iconSize: [16, 16],
-    iconAnchor: [8, 8]
+    html: '<div class="user-marker-wrap"' + rotation + '><div class="' + markerClass + '"></div></div>',
+    iconSize: [32, 32],
+    iconAnchor: [16, 16]
   });
   userMarker = L.marker(latlng, { icon, interactive: false }).addTo(map);
 
@@ -608,7 +637,11 @@ function setUserPosition(latlng, accuracy, pan) {
   const startInput = $('startAddress');
   if (startInput) startInput.value = formatLatLng({ lat: latlng[0], lng: latlng[1] });
 
-  if (pan) map.flyTo(latlng, Math.max(map.getZoom(), 15), { animate: true, duration: 0.6 });
+  if (pan && navigationMode) {
+    map.panTo(latlng, { animate: true, duration: 0.35 });
+  } else if (pan) {
+    map.flyTo(latlng, Math.max(map.getZoom(), 15), { animate: true, duration: 0.6 });
+  }
 }
 
 // ===== BOOT =====
