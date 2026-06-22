@@ -1,0 +1,27 @@
+{
+  "name": "bddr-tong-viewer",
+  "version": "1.0.0",
+  "description": "BDDR Tong - KML Map Viewer with Google Earth UI",
+  "main": "index.html",
+  "scripts": {
+    "serve": "http-server -p 8000 -o",
+    "start": "http-server -p 8000"
+  },
+  "keywords": [
+    "kml",
+    "map",
+    "leaflet",
+    "google-earth",
+    "geospatial",
+    "satellite"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/bddr-tong-viewer.git"
+  }
+}

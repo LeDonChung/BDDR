@@ -1,0 +1,123 @@
+﻿<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+    <meta name="theme-color" content="#0b1220">
+    <title>BDDR Tong - Bản đồ địa lý</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Header gọn, kiểu Google Maps -->
+    <header class="app-header">
+        <div class="app-header__left">
+            <span class="app-logo" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C7 6 4 10 4 14a8 8 0 0 0 16 0c0-4-3-8-8-12Z"/><circle cx="12" cy="14" r="3"/></svg>
+            </span>
+            <div class="app-title">
+                <h1>BDDR Tong</h1>
+                <p id="appSubtitle">Bản đồ đất đai</p>
+            </div>
+        </div>
+        <div class="app-header__right">
+            <button id="locateBtn" class="icon-btn" title="Vị trí của tôi" aria-label="Vị trí của tôi">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            </button>
+            <button id="routeBtn" class="icon-btn icon-btn--primary" title="Chỉ đường" aria-label="Chỉ đường">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Map -->
+    <main id="map" class="map">
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-card">
+                <span class="spinner" aria-hidden="true"></span>
+                <p>Đang tải bản đồ...</p>
+            </div>
+        </div>
+
+        <!-- Toast -->
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </main>
+
+    <div id="routeConfirmModal" class="modal" aria-hidden="true">
+        <div class="modal__backdrop" data-modal-close></div>
+        <section class="modal__card" role="dialog" aria-modal="true" aria-labelledby="routeConfirmTitle">
+            <button id="routeConfirmCloseBtn" class="icon-btn modal__close" title="Đóng" aria-label="Đóng">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div class="modal__pin" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+            <h2 id="routeConfirmTitle">Chỉ đường tới thửa đất này?</h2>
+            <p id="routeConfirmName" class="modal__name">Thửa đất đã chọn</p>
+            <p id="routeConfirmCoords" class="modal__coords"></p>
+            <div class="modal__actions">
+                <button id="routeConfirmCancelBtn" class="btn btn--ghost">Hủy</button>
+                <button id="routeConfirmOkBtn" class="btn btn--primary">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                    Chỉ đường
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Routing panel (slide từ dưới trên mobile, bên trái trên desktop) -->
+    <aside class="route-panel" id="routePanel" aria-hidden="true">
+        <div class="route-panel__handle" aria-hidden="true"></div>
+        <div class="route-panel__head">
+            <div>
+                <h2>Chỉ đường</h2>
+                <p class="route-panel__sub">Xuất phát từ vị trí hiện tại của bạn</p>
+            </div>
+            <button id="closeRouteBtn" class="icon-btn" title="Đóng" aria-label="Đóng">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+
+        <div class="route-panel__body">
+            <div class="route-row">
+                <span class="route-dot route-dot--start" aria-hidden="true"></span>
+                <div class="route-field">
+                    <label for="startAddress">Xuất phát</label>
+                    <input type="text" id="startAddress" placeholder="Vị trí hiện tại" readonly>
+                </div>
+            </div>
+            <div class="route-row">
+                <span class="route-dot route-dot--end" aria-hidden="true"></span>
+                <div class="route-field">
+                    <label for="endAddress">Đến</label>
+                    <input type="text" id="endAddress" placeholder="Chạm vào một thửa đất trên bản đồ">
+                </div>
+            </div>
+
+            <button id="findRouteBtn" class="btn btn--primary" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Tìm đường
+            </button>
+
+            <div id="routeDetails" class="route-details" hidden>
+                <div class="route-meta">
+                    <span id="routeDistance">—</span>
+                    <span id="routeDuration">—</span>
+                </div>
+                <div id="routeSteps" class="route-steps"></div>
+                <button id="clearRouteBtn" class="btn btn--ghost">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                    Xóa lộ trình
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-omnivore/0.3.4/leaflet-omnivore.min.js"></script>
+    <script src="script.js"></script>
+    <script src="routing.js"></script>
+</body>
+</html>
+
