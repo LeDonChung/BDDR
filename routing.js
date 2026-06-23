@@ -2,6 +2,8 @@
 let startPoint = null;
 let endPoint = null;
 let routeLayer = null;
+let routeRemainingLayer = null;
+let routeTraveledLayer = null;
 let routeMarkerLayer = null;
 let currentDestinationLabel = '';
 let activeRoute = null;
@@ -10,6 +12,9 @@ let isNavigating = false;
 let followUser = true;
 let lastNavPosition = null;
 let lastRerouteAt = 0;
+let deviceHeading = null;
+let deviceOrientationActive = false;
+let lastHeadingSource = 'none';
 
 const OFF_ROUTE_METERS = 60;
 const REROUTE_COOLDOWN_MS = 20000;
@@ -31,6 +36,14 @@ const navStatusEl       = () => $('navStatus');
 const startNavBtn       = () => $('startNavBtn');
 const stopNavBtn        = () => $('stopNavBtn');
 const recenterNavBtn    = () => $('recenterNavBtn');
+const navDriveOverlay   = () => $('navDriveOverlay');
+const navDriveDistance  = () => $('navDriveDistance');
+const navDriveInstruction = () => $('navDriveInstruction');
+const navDriveEta       = () => $('navDriveEta');
+const navDriveStatus    = () => $('navDriveStatus');
+const navDriveHeading   = () => $('navDriveHeading');
+const navDriveStopBtn   = () => $('navDriveStopBtn');
+const navDriveRecenterBtn = () => $('navDriveRecenterBtn');
 
 function openRoutePanel() {
   const p = routePanel();
@@ -66,6 +79,12 @@ function initRouting() {
 
   const recenterBtn = recenterNavBtn();
   if (recenterBtn) recenterBtn.addEventListener('click', recenterNavigation);
+
+  const driveStopBtn = navDriveStopBtn();
+  if (driveStopBtn) driveStopBtn.addEventListener('click', () => stopNavigation(false));
+
+  const driveRecenterBtn = navDriveRecenterBtn();
+  if (driveRecenterBtn) driveRecenterBtn.addEventListener('click', recenterNavigation);
 
   if (typeof map !== 'undefined' && map) {
     map.on('dragstart', () => {
@@ -170,9 +189,23 @@ function displayRoute(route, options) {
 
   const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
   routeLayer = L.polyline(coords, {
+    color: '#93a4bd',
+    weight: 5,
+    opacity: 0.35,
+    lineCap: 'round',
+    lineJoin: 'round'
+  }).addTo(map);
+  routeRemainingLayer = L.polyline(coords, {
     color: '#4f8cff',
-    weight: 4,
-    opacity: 0.9,
+    weight: 5,
+    opacity: 0.92,
+    lineCap: 'round',
+    lineJoin: 'round'
+  }).addTo(map);
+  routeTraveledLayer = L.polyline([], {
+    color: '#e8eef7',
+    weight: 5,
+    opacity: 0.28,
     lineCap: 'round',
     lineJoin: 'round'
   }).addTo(map);
@@ -209,9 +242,25 @@ function showFallbackRoute() {
   clearRouteLayers();
 
   routeLayer = L.polyline([startPoint, endPoint], {
+    color: '#93a4bd',
+    weight: 5,
+    opacity: 0.35,
+    dashArray: '8 8',
+    lineCap: 'round',
+    lineJoin: 'round'
+  }).addTo(map);
+  routeRemainingLayer = L.polyline([startPoint, endPoint], {
     color: '#4f8cff',
-    weight: 4,
-    opacity: 0.8,
+    weight: 5,
+    opacity: 0.85,
+    dashArray: '8 8',
+    lineCap: 'round',
+    lineJoin: 'round'
+  }).addTo(map);
+  routeTraveledLayer = L.polyline([], {
+    color: '#e8eef7',
+    weight: 5,
+    opacity: 0.25,
     dashArray: '8 8',
     lineCap: 'round',
     lineJoin: 'round'
@@ -258,6 +307,14 @@ function clearRouteLayers() {
     map.removeLayer(routeLayer);
     routeLayer = null;
   }
+  if (routeRemainingLayer) {
+    map.removeLayer(routeRemainingLayer);
+    routeRemainingLayer = null;
+  }
+  if (routeTraveledLayer) {
+    map.removeLayer(routeTraveledLayer);
+    routeTraveledLayer = null;
+  }
   if (routeMarkerLayer) {
     map.removeLayer(routeMarkerLayer);
     routeMarkerLayer = null;
@@ -293,8 +350,12 @@ function startNavigation() {
 
   isNavigating = true;
   followUser = true;
+  lastHeadingSource = 'none';
+  requestDeviceHeading();
+  setNavigationDriveMode(true);
   updateNavigationButtons();
   updateNavStatus('Đang bắt tín hiệu GPS...');
+  updateDriveHeadingStatus();
 
   navigationWatchId = navigator.geolocation.watchPosition(
     onNavigationPosition,
@@ -310,6 +371,8 @@ function stopNavigation(arrived) {
   }
   isNavigating = false;
   followUser = true;
+  stopDeviceHeading();
+  setNavigationDriveMode(false);
   updateNavigationButtons();
   if (arrived) {
     updateNavStatus('Đã đến gần điểm đích.');
@@ -343,6 +406,7 @@ function onNavigationPosition(pos) {
   const remaining = Math.max(0, activeRoute.totalDistance - projection.along);
   const currentStep = getCurrentStep(projection.along);
 
+  updateRouteProgress(projection.along);
   updateNavigationCard(currentStep, remaining, projection.distance, accuracy);
   highlightCurrentStep(currentStep);
 
@@ -359,19 +423,30 @@ function onNavigationPosition(pos) {
 function getNavigationHeading(latlng, gpsHeading) {
   if (Number.isFinite(gpsHeading) && gpsHeading >= 0) {
     lastNavPosition = latlng;
+    lastHeadingSource = 'gps';
     return gpsHeading;
+  }
+
+  if (Number.isFinite(deviceHeading)) {
+    lastHeadingSource = 'device';
+    return deviceHeading;
   }
 
   if (!lastNavPosition) {
     lastNavPosition = latlng;
+    lastHeadingSource = 'none';
     return null;
   }
 
   const moved = distanceBetween(lastNavPosition, latlng) * 1000;
-  if (moved < 3) return null;
+  if (moved < 3) {
+    lastHeadingSource = 'waiting';
+    return null;
+  }
 
   const heading = bearingBetween(lastNavPosition, latlng);
   lastNavPosition = latlng;
+  lastHeadingSource = 'movement';
   return heading;
 }
 
@@ -397,6 +472,80 @@ function recenterNavigation() {
   updateNavStatus(isNavigating ? 'Đang bám theo vị trí của bạn.' : 'Đã căn giữa vị trí.');
 }
 
+function setNavigationDriveMode(enabled) {
+  const overlay = navDriveOverlay();
+  document.body.classList.toggle('is-driving', enabled);
+
+  if (overlay) {
+    overlay.hidden = !enabled;
+    overlay.setAttribute('aria-hidden', enabled ? 'false' : 'true');
+  }
+
+  const panel = routePanel();
+  if (panel && enabled) {
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+  }
+
+  if (enabled) {
+    updateDriveOverlay();
+  }
+
+  if (typeof map !== 'undefined' && map) {
+    setTimeout(() => map.invalidateSize(), 280);
+  }
+}
+
+function requestDeviceHeading() {
+  if (deviceOrientationActive || !('DeviceOrientationEvent' in window)) return;
+
+  const startListening = () => {
+    window.addEventListener('deviceorientation', onDeviceOrientation, true);
+    window.addEventListener('deviceorientationabsolute', onDeviceOrientation, true);
+    deviceOrientationActive = true;
+  };
+
+  try {
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission()
+        .then(state => {
+          if (state === 'granted') startListening();
+        })
+        .catch(() => {});
+    } else {
+      startListening();
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+function stopDeviceHeading() {
+  if (!deviceOrientationActive) return;
+  window.removeEventListener('deviceorientation', onDeviceOrientation, true);
+  window.removeEventListener('deviceorientationabsolute', onDeviceOrientation, true);
+  deviceOrientationActive = false;
+  deviceHeading = null;
+}
+
+function onDeviceOrientation(event) {
+  const compassHeading = Number(event.webkitCompassHeading);
+  const alpha = Number(event.alpha);
+  let heading = null;
+
+  if (Number.isFinite(compassHeading)) {
+    heading = compassHeading;
+  } else if (event.absolute !== false && Number.isFinite(alpha)) {
+    heading = 360 - alpha;
+  }
+
+  if (Number.isFinite(heading)) {
+    deviceHeading = normalizeDegrees(heading);
+    lastHeadingSource = 'device';
+    updateDriveHeadingStatus();
+  }
+}
+
 function normalizeRoute(route, coords) {
   const cumulative = buildCumulativeDistances(coords);
   const steps = [];
@@ -419,6 +568,7 @@ function normalizeRoute(route, coords) {
     coords,
     cumulative,
     totalDistance: route.distance || cumulative[cumulative.length - 1] || 0,
+    totalDuration: route.duration || 0,
     steps
   };
 }
@@ -430,6 +580,7 @@ function buildFallbackRoute() {
     coords,
     cumulative: buildCumulativeDistances(coords),
     totalDistance: distance,
+    totalDuration: 0,
     steps: [{
       instruction: 'Đi tới điểm đích theo tuyến tham khảo',
       distance,
@@ -491,30 +642,81 @@ function getCurrentStep(along) {
   return activeRoute.steps.find(step => step.endDistance >= along + 5) || activeRoute.steps[activeRoute.steps.length - 1];
 }
 
+function updateRouteProgress(along) {
+  if (!activeRoute || !routeRemainingLayer || !routeTraveledLayer) return;
+
+  const split = splitRouteAtDistance(activeRoute, along);
+  routeTraveledLayer.setLatLngs(split.traveled);
+  routeRemainingLayer.setLatLngs(split.remaining);
+}
+
+function splitRouteAtDistance(route, along) {
+  const coords = route.coords || [];
+  const cumulative = route.cumulative || [];
+
+  if (!coords.length) return { traveled: [], remaining: [] };
+  if (along <= 0) return { traveled: [], remaining: coords };
+  if (along >= route.totalDistance) return { traveled: coords, remaining: [] };
+
+  let splitIndex = 1;
+  while (splitIndex < cumulative.length && cumulative[splitIndex] < along) {
+    splitIndex++;
+  }
+
+  const before = coords[splitIndex - 1];
+  const after = coords[splitIndex] || before;
+  const startDistance = cumulative[splitIndex - 1] || 0;
+  const endDistance = cumulative[splitIndex] || startDistance;
+  const ratio = endDistance === startDistance ? 0 : (along - startDistance) / (endDistance - startDistance);
+  const splitPoint = [
+    before[0] + (after[0] - before[0]) * ratio,
+    before[1] + (after[1] - before[1]) * ratio
+  ];
+
+  return {
+    traveled: coords.slice(0, splitIndex).concat([splitPoint]),
+    remaining: [splitPoint].concat(coords.slice(splitIndex))
+  };
+}
+
 function updateNavigationPreview() {
   if (!activeRoute || !activeRoute.steps.length) return;
   const step = activeRoute.steps[0];
   if (nextInstructionEl()) nextInstructionEl().textContent = step.instruction;
   if (nextDistanceEl()) nextDistanceEl().textContent = formatDistance(step.distance);
+  if (navDriveInstruction()) navDriveInstruction().textContent = step.instruction;
+  if (navDriveDistance()) navDriveDistance().textContent = formatDistance(step.distance);
+  updateDriveEta(activeRoute.totalDistance);
   updateNavStatus('Bấm bắt đầu để theo dõi vị trí realtime.');
 }
 
 function updateNavigationCard(step, remaining, offRouteDistance, accuracy) {
   if (!step) return;
+  const stepRemaining = Math.max(0, step.endDistance - (activeRoute.totalDistance - remaining));
+  const stepDistance = formatDistance(stepRemaining);
+
   if (nextInstructionEl()) nextInstructionEl().textContent = step.instruction;
-  if (nextDistanceEl()) nextDistanceEl().textContent = formatDistance(Math.max(0, step.endDistance - (activeRoute.totalDistance - remaining)));
+  if (nextDistanceEl()) nextDistanceEl().textContent = stepDistance;
+  if (navDriveInstruction()) navDriveInstruction().textContent = step.instruction;
+  if (navDriveDistance()) navDriveDistance().textContent = stepDistance;
+  updateDriveEta(remaining);
 
   const parts = ['Còn ' + formatDistance(remaining)];
   if (accuracy) parts.push('GPS ±' + Math.round(accuracy) + ' m');
   if (offRouteDistance > OFF_ROUTE_METERS) parts.push('lệch tuyến ' + Math.round(offRouteDistance) + ' m');
   updateNavStatus(parts.join(' • '));
+  updateDriveHeadingStatus();
 }
 
 function highlightCurrentStep(step) {
   if (!step || !routeStepsEl()) return;
   const index = activeRoute.steps.indexOf(step);
   routeStepsEl().querySelectorAll('.step').forEach(el => {
-    el.classList.toggle('step--active', Number(el.dataset.stepIndex) === index);
+    const active = Number(el.dataset.stepIndex) === index;
+    el.classList.toggle('step--active', active);
+    if (active) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
   });
 }
 
@@ -527,6 +729,39 @@ function updateNavigationButtons() {
 
 function updateNavStatus(text) {
   if (navStatusEl()) navStatusEl().textContent = text;
+  if (navDriveStatus()) navDriveStatus().textContent = text;
+}
+
+function updateDriveOverlay() {
+  if (!activeRoute || !activeRoute.steps.length) return;
+  const step = activeRoute.steps[0];
+  if (navDriveInstruction()) navDriveInstruction().textContent = step.instruction;
+  if (navDriveDistance()) navDriveDistance().textContent = formatDistance(step.distance);
+  updateDriveEta(activeRoute.totalDistance);
+  updateDriveHeadingStatus();
+}
+
+function updateDriveEta(distanceMeters) {
+  if (!navDriveEta()) return;
+  const durationMinutes = estimateDurationMinutes(distanceMeters);
+  const etaParts = ['Còn ' + formatDistance(distanceMeters)];
+  if (durationMinutes) etaParts.push(durationMinutes + ' phút');
+  navDriveEta().textContent = etaParts.join(' • ');
+}
+
+function updateDriveHeadingStatus() {
+  const el = navDriveHeading();
+  if (!el) return;
+
+  const text = {
+    gps: 'Hướng: GPS',
+    device: 'Hướng: la bàn điện thoại',
+    movement: 'Hướng: theo chiều di chuyển',
+    waiting: 'Hướng: di chuyển thêm vài mét',
+    none: 'Hướng: đang chờ GPS'
+  }[lastHeadingSource] || 'Hướng: đang chờ GPS';
+
+  el.textContent = text;
 }
 
 function instructionFromStep(step) {
@@ -570,6 +805,10 @@ function bearingBetween(a, b) {
   return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
+function normalizeDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+
 function formatRouteLatLng(latlng) {
   return Number(latlng[0]).toFixed(5) + ', ' + Number(latlng[1]).toFixed(5);
 }
@@ -578,6 +817,15 @@ function formatDistance(meters) {
   if (!Number.isFinite(meters)) return '—';
   if (meters < 1000) return Math.max(0, Math.round(meters)) + ' m';
   return (meters / 1000).toFixed(meters < 10000 ? 1 : 0) + ' km';
+}
+
+function estimateDurationMinutes(distanceMeters) {
+  if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return 0;
+  if (activeRoute && activeRoute.totalDistance > 0 && activeRoute.totalDuration > 0) {
+    const ratio = Math.max(0, Math.min(1, distanceMeters / activeRoute.totalDistance));
+    return Math.max(1, Math.round(activeRoute.totalDuration * ratio / 60));
+  }
+  return Math.max(1, Math.round(distanceMeters / 1000 / 25 * 60));
 }
 
 function escapeHtmlRoute(s) {

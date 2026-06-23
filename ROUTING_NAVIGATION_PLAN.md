@@ -147,6 +147,26 @@ Muc tieu: khi nguoi dung chon mot dia diem/thua dat, popup hien nut chi duong; s
 5. Xoay marker theo heading.
 6. Chi danh gia xoay ca ban do sau khi 5 buoc tren da chay tot.
 
+## Cap nhat 2026-06-23
+
+Bo phan Google Maps API/version rieng. Huong tiep theo la giu app Leaflet hien tai, nhung thiet ke trai nghiem chi duong giong Google Maps nhat co the.
+
+Da lam tiep:
+
+- Ve route thanh 3 lop: nen route mo, doan con lai noi bat, doan da di qua mo hon.
+- Khi `watchPosition()` cap nhat vi tri, app cat route theo vi tri gan nhat tren tuyen va cap nhat doan da di/con lai.
+- Thu lay heading tu `DeviceOrientationEvent` tren mobile, uu tien sau `coords.heading` va truoc fallback tinh tu 2 vi tri.
+- Khi buoc dan duong hien tai thay doi, danh sach buoc tu cuon toi buoc dang active.
+- Them che do giao dien dang dan duong: an header, hien the huong dan lon mau xanh tren ban do, the trang thai/ETA phia duoi, nut can giua va nut dung noi ro.
+- Hien trang thai nguon huong xoay: GPS, la ban dien thoai, theo chieu di chuyen hoac dang cho tin hieu.
+- Laptop khong co compass dang tin cay nen huong xoay se dua vao heading GPS neu co, hoac tinh theo 2 vi tri lien tiep khi nguoi dung di chuyen.
+
+Con lai nen lam sau:
+
+- Kiem thu thuc te tren dien thoai qua HTTPS de xac nhan GPS, compass va quyen cam bien.
+- Giam tan suat goi reroute neu di ngoai thuc dia lau hon du kien.
+- Chi xem xet xoay ca ban do sau khi marker heading va navigation realtime on dinh.
+
 ## Quyet dinh ky thuat can chot
 
 - Dung routing API nao cho ban production?
@@ -154,4 +174,3 @@ Muc tieu: khi nguoi dung chon mot dia diem/thua dat, popup hien nut chi duong; s
 - App deploy bang HTTPS o dau?
 - Co chap nhan Leaflet tiep tuc hay muon chuyen MapLibre GL neu uu tien navigation nang cao?
 - Muc chinh xac toi thieu mong doi la bao nhieu met?
-
