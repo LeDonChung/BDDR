@@ -19,6 +19,12 @@ let wakeLock = null;
 let offRouteSince = null;
 let lastAccuracy = null;
 let pendingDirectRoute = false;
+let followHeading = false;
+let navBearingTarget = null;
+let navBearingCurrent = 0;
+let navBearingRafId = null;
+let programmaticBearing = false;
+let driveHeadingStatusTimer = null;
 
 const OFF_ROUTE_METERS = 60;
 const REROUTE_COOLDOWN_MS = 20000;
@@ -458,9 +464,11 @@ function startNavigation() {
 
   isNavigating = true;
   followUser = true;
+  followHeading = true;
   offRouteSince = null;
   lastAccuracy = null;
   lastHeadingSource = 'none';
+  navBearingCurrent = (map && typeof map.getBearing === 'function') ? map.getBearing() : 0;
   checkLocationPermission();
   requestDeviceHeading();
   requestWakeLock();
@@ -484,6 +492,8 @@ function stopNavigation(arrived) {
   }
   isNavigating = false;
   followUser = true;
+  followHeading = false;
+  stopNavBearingLoop();
   offRouteSince = null;
   lastAccuracy = null;
   stopDeviceHeading();
@@ -491,6 +501,12 @@ function stopNavigation(arrived) {
   setNavigationDriveMode(false);
   updateNavigationButtons();
   updateFollowControls();
+  // Khi thoát dẫn đường, trả bản đồ về hướng Bắc.
+  if (map && typeof map.setBearing === 'function') {
+    programmaticBearing = true;
+    map.setBearing(0);
+    programmaticBearing = false;
+  }
   if (arrived) {
     updateNavStatus('Đã đến gần điểm đích.');
     showToast('Bạn đã đến gần điểm đích');
@@ -515,6 +531,7 @@ function onNavigationPosition(pos) {
   const latlng = [latitude, longitude];
   const computedHeading = getNavigationHeading(latlng, heading);
   lastAccuracy = Number.isFinite(accuracy) ? accuracy : null;
+  setNavBearingTarget(computedHeading);
 
   startPoint = latlng;
   if (typeof setUserPosition === 'function') {
@@ -541,6 +558,13 @@ function onNavigationPosition(pos) {
 }
 
 function getNavigationHeading(latlng, gpsHeading) {
+  // Ưu tiên la bàn thiết bị khi đang hoạt động: mũi tên xoay mượt hơn GPS.
+  if (deviceOrientationActive && Number.isFinite(deviceHeading)) {
+    lastNavPosition = latlng;
+    lastHeadingSource = 'device';
+    return deviceHeading;
+  }
+
   if (Number.isFinite(gpsHeading) && gpsHeading >= 0) {
     lastNavPosition = latlng;
     lastHeadingSource = 'gps';
@@ -604,11 +628,15 @@ function handleOffRoute(distanceFromRoute) {
 
 function recenterNavigation() {
   followUser = true;
+  if (isNavigating) {
+    followHeading = true;
+    if (Number.isFinite(navBearingTarget)) startNavBearingLoop();
+  }
   if (startPoint && typeof map !== 'undefined' && map) {
     map.flyTo(startPoint, Math.max(map.getZoom(), 17), { animate: true, duration: 0.45 });
   }
   updateFollowControls();
-  updateNavStatus(isNavigating ? 'Đang bám theo vị trí của bạn.' : 'Đã căn giữa vị trí.');
+  updateNavStatus(isNavigating ? 'Đang bám theo vị trí và hướng di chuyển.' : 'Đã căn giữa vị trí.');
 }
 
 function setNavigationDriveMode(enabled) {
@@ -716,8 +744,58 @@ function onDeviceOrientation(event) {
   if (Number.isFinite(heading)) {
     deviceHeading = normalizeDegrees(heading);
     lastHeadingSource = 'device';
-    updateDriveHeadingStatus();
+    // Lái mũi tên hướng liên tục theo la bàn -> xoay mượt, bù trừ góc xoay bản đồ.
+    currentUserHeading = deviceHeading;
+    if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(false);
+    // Khi đang dẫn đường và bám hướng, cho bản đồ xoay theo la bàn.
+    if (isNavigating && followHeading) setNavBearingTarget(deviceHeading);
+    throttledDriveHeadingStatus();
   }
+}
+
+function throttledDriveHeadingStatus() {
+  if (driveHeadingStatusTimer) return;
+  updateDriveHeadingStatus();
+  driveHeadingStatusTimer = setTimeout(() => { driveHeadingStatusTimer = null; }, 250);
+}
+
+// ===== AUTO-ROTATE MAP TO HEADING DURING NAVIGATION =====
+function setNavBearingTarget(heading) {
+  if (!Number.isFinite(heading)) return;
+  navBearingTarget = ((heading % 360) + 360) % 360;
+  if (followHeading && isNavigating) startNavBearingLoop();
+}
+
+function startNavBearingLoop() {
+  if (navBearingRafId !== null) return;
+  if (!map || typeof map.setBearing !== 'function') return;
+  navBearingRafId = requestAnimationFrame(navBearingFrame);
+}
+
+function stopNavBearingLoop() {
+  if (navBearingRafId !== null) {
+    cancelAnimationFrame(navBearingRafId);
+    navBearingRafId = null;
+  }
+}
+
+function navBearingFrame() {
+  navBearingRafId = null;
+  if (!followHeading || !isNavigating || !map || typeof map.setBearing !== 'function') return;
+  if (!Number.isFinite(navBearingTarget)) { navBearingRafId = requestAnimationFrame(navBearingFrame); return; }
+
+  // Nội suy góc đường ngắn nhất -> xoay mượt, không quay vòng dài.
+  let delta = ((navBearingTarget - navBearingCurrent) % 360 + 540) % 360 - 180;
+  if (Math.abs(delta) < 0.3) {
+    navBearingCurrent = navBearingTarget;
+  } else {
+    navBearingCurrent = (((navBearingCurrent + delta * 0.18) % 360) + 360) % 360;
+  }
+
+  programmaticBearing = true;
+  map.setBearing(navBearingCurrent);
+  programmaticBearing = false;
+  navBearingRafId = requestAnimationFrame(navBearingFrame);
 }
 
 function normalizeRoute(route, coords, finalAccessDistance) {
@@ -955,6 +1033,8 @@ function updateDriveHeadingStatus() {
   }[lastHeadingSource] || 'Hướng: đang chờ GPS';
 
   const parts = [text];
+  if (isNavigating && followHeading) parts.push('bản đồ bám hướng');
+  else if (isNavigating) parts.push('bản đồ hướng Bắc (chạm căn giữa để bám hướng)');
   if (lastAccuracy) parts.push('GPS ±' + Math.round(lastAccuracy) + ' m');
   if (wakeLock) parts.push('màn hình luôn bật');
   el.textContent = parts.join(' • ');

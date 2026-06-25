@@ -936,3 +936,44 @@ html, body {
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
   cursor: pointer;
 }
+
+
+/* ====== ROTATE CONTROL (2-finger compass / map rotate) ====== */
+.leaflet-control-rotate {
+  border: none !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: var(--shadow) !important;
+  background: rgba(17, 26, 44, 0.95) !important;
+  margin: 12px !important;
+}
+.leaflet-control-rotate-toggle {
+  display: block !important;
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  background: transparent !important;
+}
+.leaflet-control-rotate-toggle:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+.leaflet-control-rotate-arrow {
+  filter: invert(1) opacity(0.92);
+}
+.is-driving .leaflet-control-rotate {
+  margin-top: 112px !important;
+}
+
+/* PMTiles canvas must stay transparent over raster basemap */
+.leaflet-pane canvas,
+.leaflet-layer canvas,
+.leaflet-tile canvas {
+  background: transparent !important;
+}
+
+.route-choice-popup {
+  z-index: 1200 !important;
+}
+.route-choice-popup.leaflet-popup {
+  z-index: 1200 !important;
+}
