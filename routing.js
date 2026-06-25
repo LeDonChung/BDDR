@@ -15,10 +15,16 @@ let lastRerouteAt = 0;
 let deviceHeading = null;
 let deviceOrientationActive = false;
 let lastHeadingSource = 'none';
+let wakeLock = null;
+let offRouteSince = null;
+let lastAccuracy = null;
+let pendingDirectRoute = false;
 
 const OFF_ROUTE_METERS = 60;
 const REROUTE_COOLDOWN_MS = 20000;
 const ARRIVAL_METERS = 25;
+const OFF_ROUTE_CONFIRM_MS = 5000;
+const ROUTE_REQUEST_TIMEOUT_MS = 12000;
 
 
 const routePanel = () => $('routePanel');
@@ -61,6 +67,60 @@ function closeRoutePanel() {
   }
 }
 
+function beginDirectRoute(latlng, label) {
+  setRouteDestination(latlng, label || 'Điểm đã chọn');
+  closeRoutePanel();
+
+  if (!startPoint) {
+    pendingDirectRoute = true;
+    showToast('Đang lấy vị trí hiện tại...');
+    if (typeof locateUser === 'function') locateUser(false);
+    return;
+  }
+
+  runDirectRoute();
+}
+
+async function runDirectRoute() {
+  if (!startPoint || !endPoint) {
+    pendingDirectRoute = true;
+    return;
+  }
+
+  pendingDirectRoute = false;
+  closeRoutePanel();
+  showToast('Đang tìm đường...');
+
+  await findRoute({ silent: true });
+
+  if (activeRoute) {
+    startNavigation();
+  }
+}
+
+function openGoogleMapsRoute(latlng, label) {
+  if (!Array.isArray(latlng) || latlng.length < 2) return;
+
+  setRouteDestination(latlng, label || 'Điểm đã chọn');
+  closeRoutePanel();
+
+  const params = new URLSearchParams({
+    api: '1',
+    destination: routeParamLatLng(latlng),
+    travelmode: 'driving'
+  });
+
+  if (startPoint) {
+    params.set('origin', routeParamLatLng(startPoint));
+  }
+
+  window.open('https://www.google.com/maps/dir/?' + params.toString(), '_blank', 'noopener');
+}
+
+function routeParamLatLng(latlng) {
+  return Number(latlng[0]).toFixed(6) + ',' + Number(latlng[1]).toFixed(6);
+}
+
 function initRouting() {
   const closeBtn = $('closeRouteBtn');
   if (closeBtn) closeBtn.addEventListener('click', closeRoutePanel);
@@ -91,9 +151,16 @@ function initRouting() {
       if (isNavigating) {
         followUser = false;
         updateNavStatus('Đã tạm dừng tự bám bản đồ. Bấm căn giữa để tiếp tục.');
+        updateFollowControls();
       }
     });
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && isNavigating) {
+      requestWakeLock();
+    }
+  });
 
   // cho phép nhập tọa độ tay vào ô "Đến"
   const endInp = endAddressInput();
@@ -132,11 +199,13 @@ function updateRouteBtnState() {
 
 // Hàm này được script.js gọi tự động khi đã có cả 2 điểm
 function tryAutoRoute() {
+  if (pendingDirectRoute) {
+    runDirectRoute();
+    return;
+  }
+
   if (startPoint && endPoint) {
-    openRoutePanel();
-    findRoute();
-  } else {
-    openRoutePanel();
+    findRoute({ silent: true });
   }
 }
 
@@ -178,8 +247,17 @@ async function requestRoute(startLatLng, endLatLng) {
   const end = endLatLng[1] + ',' + endLatLng[0];
   const url = 'https://router.project-osrm.org/route/v1/driving/' + start + ';' + end +
               '?steps=true&geometries=geojson&overview=full&alternatives=false&continue_straight=default';
-  const r = await fetch(url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ROUTE_REQUEST_TIMEOUT_MS);
+  let r;
+  try {
+    r = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!r.ok) throw new Error('Routing HTTP ' + r.status);
   const data = await r.json();
+  if (data.code && data.code !== 'Ok') throw new Error('Routing code ' + data.code);
   return data.routes && data.routes.length ? data.routes[0] : null;
 }
 
@@ -350,10 +428,15 @@ function startNavigation() {
 
   isNavigating = true;
   followUser = true;
+  offRouteSince = null;
+  lastAccuracy = null;
   lastHeadingSource = 'none';
+  checkLocationPermission();
   requestDeviceHeading();
+  requestWakeLock();
   setNavigationDriveMode(true);
   updateNavigationButtons();
+  updateFollowControls();
   updateNavStatus('Đang bắt tín hiệu GPS...');
   updateDriveHeadingStatus();
 
@@ -371,9 +454,13 @@ function stopNavigation(arrived) {
   }
   isNavigating = false;
   followUser = true;
+  offRouteSince = null;
+  lastAccuracy = null;
   stopDeviceHeading();
+  releaseWakeLock();
   setNavigationDriveMode(false);
   updateNavigationButtons();
+  updateFollowControls();
   if (arrived) {
     updateNavStatus('Đã đến gần điểm đích.');
     showToast('Bạn đã đến gần điểm đích');
@@ -384,7 +471,11 @@ function stopNavigation(arrived) {
 
 function onNavigationError(err) {
   console.warn(err);
-  const msg = err.code === 1 ? 'Bạn đã từ chối quyền vị trí' : 'GPS chưa ổn định, đang thử lại...';
+  const msg = err.code === 1
+    ? 'Bạn đã từ chối quyền vị trí. Hãy cấp lại quyền định vị cho trang.'
+    : err.code === 3
+      ? 'GPS phản hồi chậm, app vẫn đang thử lại...'
+      : 'GPS chưa ổn định, đang thử lại...';
   updateNavStatus(msg);
   showToast(msg);
 }
@@ -393,6 +484,7 @@ function onNavigationPosition(pos) {
   const { latitude, longitude, accuracy, heading } = pos.coords;
   const latlng = [latitude, longitude];
   const computedHeading = getNavigationHeading(latlng, heading);
+  lastAccuracy = Number.isFinite(accuracy) ? accuracy : null;
 
   startPoint = latlng;
   if (typeof setUserPosition === 'function') {
@@ -415,9 +507,7 @@ function onNavigationPosition(pos) {
     return;
   }
 
-  if (projection.distance > OFF_ROUTE_METERS) {
-    maybeReroute(projection.distance);
-  }
+  handleOffRoute(projection.distance);
 }
 
 function getNavigationHeading(latlng, gpsHeading) {
@@ -464,11 +554,30 @@ function maybeReroute(distanceFromRoute) {
   });
 }
 
+function handleOffRoute(distanceFromRoute) {
+  if (!Number.isFinite(distanceFromRoute) || distanceFromRoute <= OFF_ROUTE_METERS) {
+    offRouteSince = null;
+    return;
+  }
+
+  const now = Date.now();
+  if (!offRouteSince) offRouteSince = now;
+
+  const elapsed = now - offRouteSince;
+  if (elapsed < OFF_ROUTE_CONFIRM_MS) {
+    updateNavStatus('Có thể đang lệch tuyến khoảng ' + Math.round(distanceFromRoute) + ' m, đang xác nhận GPS...');
+    return;
+  }
+
+  maybeReroute(distanceFromRoute);
+}
+
 function recenterNavigation() {
   followUser = true;
   if (startPoint && typeof map !== 'undefined' && map) {
     map.flyTo(startPoint, Math.max(map.getZoom(), 17), { animate: true, duration: 0.45 });
   }
+  updateFollowControls();
   updateNavStatus(isNavigating ? 'Đang bám theo vị trí của bạn.' : 'Đã căn giữa vị trí.');
 }
 
@@ -518,6 +627,41 @@ function requestDeviceHeading() {
   } catch (e) {
     console.warn(e);
   }
+}
+
+async function checkLocationPermission() {
+  if (!navigator.permissions || !navigator.permissions.query) return;
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' });
+    if (status.state === 'denied') {
+      updateNavStatus('Quyền vị trí đang bị chặn. Hãy cấp lại quyền định vị cho trang.');
+    } else if (status.state === 'prompt') {
+      updateNavStatus('Trình duyệt sẽ hỏi quyền vị trí. Hãy chọn Cho phép.');
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      wakeLock = null;
+      updateDriveHeadingStatus();
+    });
+    updateDriveHeadingStatus();
+  } catch (e) {
+    wakeLock = null;
+    console.warn(e);
+  }
+}
+
+function releaseWakeLock() {
+  if (!wakeLock) return;
+  wakeLock.release().catch(() => {});
+  wakeLock = null;
 }
 
 function stopDeviceHeading() {
@@ -725,6 +869,7 @@ function updateNavigationButtons() {
   const stopBtn = stopNavBtn();
   if (startBtn) startBtn.hidden = isNavigating || !activeRoute;
   if (stopBtn) stopBtn.hidden = !isNavigating;
+  updateFollowControls();
 }
 
 function updateNavStatus(text) {
@@ -761,7 +906,20 @@ function updateDriveHeadingStatus() {
     none: 'Hướng: đang chờ GPS'
   }[lastHeadingSource] || 'Hướng: đang chờ GPS';
 
-  el.textContent = text;
+  const parts = [text];
+  if (lastAccuracy) parts.push('GPS ±' + Math.round(lastAccuracy) + ' m');
+  if (wakeLock) parts.push('màn hình luôn bật');
+  el.textContent = parts.join(' • ');
+}
+
+function updateFollowControls() {
+  const btns = [recenterNavBtn(), navDriveRecenterBtn()].filter(Boolean);
+  btns.forEach(btn => {
+    btn.classList.toggle('map-fab--active', isNavigating && followUser);
+    btn.classList.toggle('icon-btn--active', isNavigating && followUser);
+    btn.title = followUser ? 'Đang bám theo vị trí' : 'Căn giữa và bám theo vị trí';
+    btn.setAttribute('aria-label', btn.title);
+  });
 }
 
 function instructionFromStep(step) {

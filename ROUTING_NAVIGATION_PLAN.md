@@ -160,6 +160,7 @@ Da lam tiep:
 - Them che do giao dien dang dan duong: an header, hien the huong dan lon mau xanh tren ban do, the trang thai/ETA phia duoi, nut can giua va nut dung noi ro.
 - Hien trang thai nguon huong xoay: GPS, la ban dien thoai, theo chieu di chuyen hoac dang cho tin hieu.
 - Laptop khong co compass dang tin cay nen huong xoay se dua vao heading GPS neu co, hoac tinh theo 2 vi tri lien tiep khi nguoi dung di chuyen.
+- Xem tong hop chi tiet cac cai thien trong `NAVIGATION_IMPROVEMENTS.md`.
 
 Con lai nen lam sau:
 
