@@ -5,6 +5,7 @@ let routeLayer = null;
 let routeRemainingLayer = null;
 let routeTraveledLayer = null;
 let routeMarkerLayer = null;
+let routeSvgRenderer = null;
 let currentDestinationLabel = '';
 let activeRoute = null;
 let navigationWatchId = null;
@@ -59,6 +60,12 @@ const navDriveHeading   = () => $('navDriveHeading');
 const navDriveStopBtn   = () => $('navDriveStopBtn');
 const navDriveCloseBtn  = () => $('navDriveCloseBtn');
 const navDriveRecenterBtn = () => $('navDriveRecenterBtn');
+
+function getRouteRenderer() {
+  if (routeSvgRenderer) return routeSvgRenderer;
+  routeSvgRenderer = L.svg({ padding: 0.5 });
+  return routeSvgRenderer;
+}
 
 function openRoutePanel() {
   const p = routePanel();
@@ -290,21 +297,24 @@ function displayRoute(route, options) {
     weight: 5,
     opacity: 0.35,
     lineCap: 'round',
-    lineJoin: 'round'
+    lineJoin: 'round',
+    renderer: getRouteRenderer()
   }).addTo(map);
   routeRemainingLayer = L.polyline(coords, {
     color: '#4f8cff',
     weight: 5,
     opacity: 0.92,
     lineCap: 'round',
-    lineJoin: 'round'
+    lineJoin: 'round',
+    renderer: getRouteRenderer()
   }).addTo(map);
   routeTraveledLayer = L.polyline([], {
     color: '#e8eef7',
     weight: 5,
     opacity: 0.28,
     lineCap: 'round',
-    lineJoin: 'round'
+    lineJoin: 'round',
+    renderer: getRouteRenderer()
   }).addTo(map);
 
   renderRouteMarkers();
@@ -361,7 +371,8 @@ function showFallbackRoute() {
     opacity: 0.35,
     dashArray: '8 8',
     lineCap: 'round',
-    lineJoin: 'round'
+    lineJoin: 'round',
+    renderer: getRouteRenderer()
   }).addTo(map);
   routeRemainingLayer = L.polyline([startPoint, endPoint], {
     color: '#4f8cff',
@@ -369,7 +380,8 @@ function showFallbackRoute() {
     opacity: 0.85,
     dashArray: '8 8',
     lineCap: 'round',
-    lineJoin: 'round'
+    lineJoin: 'round',
+    renderer: getRouteRenderer()
   }).addTo(map);
   routeTraveledLayer = L.polyline([], {
     color: '#e8eef7',
@@ -377,7 +389,8 @@ function showFallbackRoute() {
     opacity: 0.25,
     dashArray: '8 8',
     lineCap: 'round',
-    lineJoin: 'round'
+    lineJoin: 'round',
+    renderer: getRouteRenderer()
   }).addTo(map);
 
   renderRouteMarkers();
@@ -395,9 +408,10 @@ function showFallbackRoute() {
 }
 
 function renderRouteMarkers() {
+  const routeRenderer = getRouteRenderer();
   routeMarkerLayer = L.layerGroup([
-    L.circleMarker(startPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#4ade80', fillOpacity: 1 }),
-    L.circleMarker(endPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#ff5b5b', fillOpacity: 1 })
+    L.circleMarker(startPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#4ade80', fillOpacity: 1, renderer: routeRenderer }),
+    L.circleMarker(endPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#ff5b5b', fillOpacity: 1, renderer: routeRenderer })
   ]).addTo(map);
 }
 
@@ -447,7 +461,7 @@ function clearRoute() {
   updateRouteBtnState();
 }
 
-function startNavigation() {
+async function startNavigation() {
   if (!activeRoute || !endPoint) {
     showToast('Hãy tìm đường trước khi bắt đầu dẫn đường');
     return;
@@ -470,7 +484,7 @@ function startNavigation() {
   lastHeadingSource = 'none';
   navBearingCurrent = (map && typeof map.getBearing === 'function') ? map.getBearing() : 0;
   checkLocationPermission();
-  requestDeviceHeading();
+  await requestDeviceHeading(true);
   requestWakeLock();
   setNavigationDriveMode(true);
   updateNavigationButtons();
@@ -663,27 +677,43 @@ function setNavigationDriveMode(enabled) {
   }
 }
 
-function requestDeviceHeading() {
-  if (deviceOrientationActive || !('DeviceOrientationEvent' in window)) return;
+async function requestDeviceHeading(showFeedback) {
+  if (deviceOrientationActive) return true;
+  if (!('DeviceOrientationEvent' in window)) {
+    if (showFeedback) updateNavStatus('Thiết bị/trình duyệt không hỗ trợ la bàn.');
+    return false;
+  }
 
   const startListening = () => {
     window.addEventListener('deviceorientation', onDeviceOrientation, true);
     window.addEventListener('deviceorientationabsolute', onDeviceOrientation, true);
     deviceOrientationActive = true;
+    return true;
   };
 
   try {
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission()
-        .then(state => {
-          if (state === 'granted') startListening();
-        })
-        .catch(() => {});
-    } else {
-      startListening();
+      const requests = [DeviceOrientationEvent.requestPermission()];
+      if ('DeviceMotionEvent' in window && typeof DeviceMotionEvent.requestPermission === 'function') {
+        requests.push(DeviceMotionEvent.requestPermission());
+      }
+      const states = await Promise.all(requests);
+      const granted = states.every(state => state === 'granted');
+      if (granted) return startListening();
+      if (showFeedback) {
+        updateNavStatus('iPhone đang chặn la bàn. Hãy bấm Cho phép khi Safari hỏi quyền Cảm biến chuyển động & định hướng.');
+        showToast('La bàn chưa được cấp quyền trên iPhone');
+      }
+      return false;
     }
+    return startListening();
   } catch (e) {
     console.warn(e);
+    if (showFeedback) {
+      updateNavStatus('Không bật được la bàn. Nếu đang dùng iPhone, hãy cho phép Motion & Orientation Access rồi thử lại.');
+      showToast('Không bật được la bàn');
+    }
+    return false;
   }
 }
 
