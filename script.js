@@ -22,14 +22,18 @@ let isInitialKMLLoading = false;
 let parcelSearchIndex = [];
 let parcelSearchActiveIndex = -1;
 let parcelSearchResults = [];
+let labelFeatures = [];
+let labelsLoaded = false;
+let labelLayer = null;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
-const KMZ_SOURCE = 'data/BDDR.kmz';
-const KMZ_DATA_VERSION = '1.0.0';
+const GEOJSON_SOURCE = 'data/BDDR.geojson';
+const LABELS_SOURCE = 'data/BDDR-labels.geojson';
+const GEOJSON_DATA_VERSION = '1.0.1';
 const KML_CACHE_DB = 'bddr-map-cache';
 const KML_CACHE_STORE = 'kml';
-const KML_CACHE_KEY = 'bddr-kml';
+const KML_CACHE_KEY = 'bddr-geojson';
 const APP_STATE_KEY = 'bddr-app-state';
 const KML_RENDER_PADDING = 0.08;
 const KML_RENDER_CHUNK_SIZE = 120;
@@ -200,66 +204,39 @@ async function loadDefaultKML() {
   updateLoadingProgress(5, 'Đang kiểm tra dữ liệu...');
 
   try {
-    const cachedXml = await loadCachedKMLText();
-    if (cachedXml) {
+    const cachedGeoJson = await loadCachedKMLText();
+    if (cachedGeoJson) {
       updateLoadingProgress(45, 'Đang tải dữ liệu...');
-      runKMLParseWhenIdle(cachedXml);
+      runKMLParseWhenIdle(cachedGeoJson);
       return;
     }
 
-    updateLoadingProgress(12, 'Đang tải dữ liệu bản đồ...');
-    const response = await fetch(KMZ_SOURCE);
+    updateLoadingProgress(12, 'Đang tải dữ liệu GeoJSON...');
+    const response = await fetch(GEOJSON_SOURCE);
     if (!response.ok) throw new Error('HTTP ' + response.status);
 
-    updateLoadingProgress(24, 'Đang nhận file KMZ...');
-    const buffer = await response.arrayBuffer();
-
-    updateLoadingProgress(36, 'Đang giải nén KMZ...');
-    const xml = await extractKMLFromKMZ(buffer);
+    updateLoadingProgress(36, 'Đang nhận dữ liệu GeoJSON...');
+    const geoJsonText = await response.text();
 
     updateLoadingProgress(44, 'Đang lưu dữ liệu vào máy...');
-    const cacheSaved = await saveCachedKMLText(xml);
+    const cacheSaved = await saveCachedKMLText(geoJsonText);
     if (!cacheSaved) showToast('Không đủ dung lượng lưu cache, lần sau có thể tải lại', 3200);
 
     updateLoadingProgress(50, 'Đang chuẩn bị dữ liệu...');
-    runKMLParseWhenIdle(xml);
+    runKMLParseWhenIdle(geoJsonText);
   } catch (err) {
     console.error(err);
     isInitialKMLLoading = false;
-    showToast('Không thể tải file KMZ');
+    showToast('Không thể tải file GeoJSON');
     setOverlayVisible(false);
   }
 }
 
-function runKMLParseWhenIdle(xml) {
-  const run = () => parseAndIndexKML(xml);
+function runKMLParseWhenIdle(geoJsonText) {
+  const run = () => parseAndIndexGeoJSON(geoJsonText);
   if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
   else setTimeout(run, 200);
 }
-
-function extractKMLFromKMZ(buffer) {
-  if (!window.fflate || typeof window.fflate.unzip !== 'function') {
-    throw new Error('Thiếu thư viện giải nén KMZ');
-  }
-
-  return new Promise((resolve, reject) => {
-    window.fflate.unzip(new Uint8Array(buffer), (err, files) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-
-      const kmlName = Object.keys(files).find(name => /\.kml$/i.test(name));
-      if (!kmlName) {
-        reject(new Error('KMZ không chứa file KML'));
-        return;
-      }
-
-      resolve(window.fflate.strFromU8(files[kmlName]));
-    });
-  });
-}
-
 function openKMLCacheDB() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) {
@@ -285,7 +262,7 @@ async function loadCachedKMLText() {
     const request = tx.objectStore(KML_CACHE_STORE).get(KML_CACHE_KEY);
     request.onsuccess = () => {
       const record = request.result;
-      resolve(record && record.version === KMZ_DATA_VERSION ? record.xml : null);
+      resolve(record && record.version === GEOJSON_DATA_VERSION ? record.text : null);
     };
     request.onerror = () => resolve(null);
     tx.oncomplete = () => db.close();
@@ -307,8 +284,8 @@ async function saveCachedKMLText(xml) {
     const tx = db.transaction(KML_CACHE_STORE, 'readwrite');
     tx.objectStore(KML_CACHE_STORE).put({
       key: KML_CACHE_KEY,
-      version: KMZ_DATA_VERSION,
-      xml,
+      version: GEOJSON_DATA_VERSION,
+      text: xml,
       savedAt: Date.now()
     });
     tx.oncomplete = () => {
@@ -347,6 +324,131 @@ function saveAppState() {
     baseLayer: currentBaseLayer === satelliteLayer ? 'satellite' : 'street'
   }));
 }
+function parseAndIndexGeoJSON(geoJsonText) {
+  try {
+    if (kmlLayer) {
+      map.removeLayer(kmlLayer);
+      kmlLayer = null;
+    }
+    kmlLayer = L.featureGroup();
+    kmlLayer.addTo(map);
+    kmlFeatures = [];
+    kmlActiveFeatures = new Set();
+    kmlFeatureGrid = new Map();
+    kmlLargeFeatures = [];
+    ctyCodeLabelBounds = [];
+
+    updateLoadingProgress(52, 'Đang đọc dữ liệu GeoJSON...');
+    const geojson = JSON.parse(geoJsonText);
+    const sourceFeatures = geojson.type === 'FeatureCollection' ? geojson.features : [geojson];
+    let count = 0;
+
+    sourceFeatures.forEach((feature, index) => {
+      if (!feature || feature.type !== 'Feature' || !feature.geometry) return;
+      const properties = feature.properties || {};
+      const name = properties.name || ('Thửa ' + (index + 1));
+      const desc = properties.description || '';
+      const level = Number.isFinite(Number(properties.level)) ? Number(properties.level) : null;
+      count += addGeoJSONGeometry(feature.geometry, name, desc, level);
+    });
+
+    kmlLoaded = true;
+    updateLoadingProgress(72, 'Đang gom nhãn và lập chỉ mục...');
+    classifyCtyCodeLabelClusters();
+    buildKMLSpatialIndex();
+    awaitLabelsLoad();
+    buildParcelSearchIndex();
+    finishLoadingProgress('Đã sẵn sàng');
+    scheduleVisibleKMLRender(360);
+    showToast('Đã sẵn sàng ' + count + ' đối tượng');
+  } catch (err) {
+    console.error(err);
+    isInitialKMLLoading = false;
+    setOverlayVisible(false);
+    showToast('Lỗi phân tích GeoJSON');
+  }
+}
+
+function addGeoJSONGeometry(geometry, name, desc, level) {
+  if (!geometry) return 0;
+
+  if (geometry.type === 'GeometryCollection') {
+    return (geometry.geometries || []).reduce((total, child) => {
+      return total + addGeoJSONGeometry(child, name, desc, level);
+    }, 0);
+  }
+
+  if (geometry.type === 'Polygon') {
+    const latlngs = geoJSONPolygonToLatLngs(geometry.coordinates);
+    if (!latlngs.length) return 0;
+    kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level));
+    return 1;
+  }
+
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates || []).reduce((total, polygon) => {
+      const latlngs = geoJSONPolygonToLatLngs(polygon);
+      if (!latlngs.length) return total;
+      kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level));
+      return total + 1;
+    }, 0);
+  }
+
+  if (geometry.type === 'LineString') {
+    const latlngs = geoJSONLineToLatLngs(geometry.coordinates);
+    if (!latlngs.length) return 0;
+    kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level));
+    return 1;
+  }
+
+  if (geometry.type === 'MultiLineString') {
+    return (geometry.coordinates || []).reduce((total, line) => {
+      const latlngs = geoJSONLineToLatLngs(line);
+      if (!latlngs.length) return total;
+      kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level));
+      return total + 1;
+    }, 0);
+  }
+
+  if (geometry.type === 'Point') {
+    const latlng = geoJSONPositionToLatLng(geometry.coordinates);
+    if (!latlng) return 0;
+    kmlFeatures.push(createFeatureRecord('point', latlng, name, desc, level));
+    return 1;
+  }
+
+  if (geometry.type === 'MultiPoint') {
+    return (geometry.coordinates || []).reduce((total, point) => {
+      const latlng = geoJSONPositionToLatLng(point);
+      if (!latlng) return total;
+      kmlFeatures.push(createFeatureRecord('point', latlng, name, desc, level));
+      return total + 1;
+    }, 0);
+  }
+
+  return 0;
+}
+
+function geoJSONPolygonToLatLngs(rings) {
+  return (rings || [])
+    .map(geoJSONLineToLatLngs)
+    .filter(ring => ring.length);
+}
+
+function geoJSONLineToLatLngs(coordinates) {
+  return (coordinates || [])
+    .map(geoJSONPositionToLatLng)
+    .filter(Boolean);
+}
+
+function geoJSONPositionToLatLng(position) {
+  if (!Array.isArray(position) || position.length < 2) return null;
+  const lng = Number(position[0]);
+  const lat = Number(position[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return [lat, lng];
+}
+
 function parseAndIndexKML(xmlText) {
   try {
     if (kmlLayer) {
@@ -877,33 +979,164 @@ function parseCoords(coordNodes) {
 function initParcelSearch() {
   const input = $('parcelSearchInput');
   const suggestions = $('parcelSearchSuggestions');
+  const clearBtn = $('parcelSearchClearBtn');
   if (!input || !suggestions) return;
 
-  input.addEventListener('input', () => showParcelSearchSuggestions(input.value));
+  const syncClearButton = () => input.closest('.app-search')?.classList.toggle('has-value', input.value.trim().length > 0);
+
+  input.addEventListener('input', () => {
+    syncClearButton();
+    showParcelSearchSuggestions(input.value);
+  });
   input.addEventListener('focus', () => showParcelSearchSuggestions(input.value));
   input.addEventListener('keydown', onParcelSearchKeyDown);
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      input.value = '';
+      syncClearButton();
+      hideParcelSearchSuggestions();
+      input.focus();
+    });
+  }
+  syncClearButton();
 
   document.addEventListener('click', (event) => {
     if (!event.target.closest || !event.target.closest('.app-search')) hideParcelSearchSuggestions();
   });
 }
 
+
+async function awaitLabelsLoad() {
+  if (labelsLoaded) return;
+  try {
+    const response = await fetch(LABELS_SOURCE);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    parseLabelsGeoJSON(await response.json());
+    labelsLoaded = true;
+    buildParcelSearchIndex();
+    const input = parcelSearchInput;
+    if (input && input.value.trim()) showParcelSearchSuggestions(input.value);
+  } catch (err) {
+    console.warn('Không thể tải label GeoJSON', err);
+    labelsLoaded = true;
+  }
+}
+
+function parseLabelsGeoJSON(geojson) {
+  labelFeatures = [];
+  const features = geojson && geojson.type === 'FeatureCollection' ? geojson.features : [];
+  features.forEach(feature => {
+    if (!feature || !feature.geometry || feature.geometry.type !== 'Point') return;
+    const coordinates = feature.geometry.coordinates || [];
+    const lng = Number(coordinates[0]);
+    const lat = Number(coordinates[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const properties = feature.properties || {};
+    const label = String(properties.label || '').trim();
+    if (!label) return;
+
+    labelFeatures.push({
+      label,
+      code: String(properties.code || '').trim(),
+      unit: String(properties.unit || '').trim(),
+      number: String(properties.number || '').trim(),
+      center: [lat, lng],
+      properties,
+      layer: null
+    });
+  });
+}
+
 function buildParcelSearchIndex() {
-  parcelSearchIndex = kmlFeatures
+  const polygonItems = kmlFeatures
     .filter(feature => feature.clickable && feature.type === 'polygon')
     .map((feature, index) => {
       const name = cleanDestinationName(feature.name || ('Lô ' + (index + 1)));
-      const desc = String(feature.desc || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-      const label = name === 'Điểm đã chọn' && desc ? desc : name;
+      const desc = String(feature.desc || '').replace(/<[^>]*>/g, ' ').replace(/s+/g, ' ').trim();
+      const fallbackLabel = 'Lô gần ' + formatLatLng({ lat: feature.centerLat, lng: feature.centerLng });
+      const label = name === 'Điểm đã chọn' ? (desc || fallbackLabel) : name;
       return {
+        type: 'parcel',
         feature,
         label,
         desc,
         center: [feature.centerLat, feature.centerLng],
-        searchText: normalizeParcelSearchText([name, desc].join(' '))
+        searchText: normalizeParcelSearchText([name, desc, fallbackLabel].join(' '))
       };
-    })
+    });
+
+  const labelItems = labelFeatures.map(labelFeature => {
+    const isParcelCode = Boolean(labelFeature.code);
+    const displayCode = labelFeature.code || [labelFeature.unit, labelFeature.number].filter(Boolean).join(' ') || labelFeature.label;
+    const areaText = isParcelCode && labelFeature.number ? 'Diện tích: ' + labelFeature.number + ' ha' : '';
+    return {
+      type: 'label',
+      feature: null,
+      label: displayCode,
+      desc: areaText,
+      center: labelFeature.center,
+      searchText: normalizeParcelSearchText([
+        labelFeature.label,
+        labelFeature.code,
+        labelFeature.unit,
+        labelFeature.number
+      ].join(' '))
+    };
+  });
+
+  parcelSearchIndex = polygonItems.concat(labelItems)
     .filter(item => item.searchText.length > 0);
+}
+
+
+function renderVisibleLabels() {
+  if (!map || !labelsLoaded || !labelFeatures.length) return;
+  if (!labelLayer) {
+    labelLayer = L.layerGroup().addTo(map);
+  }
+
+  const zoom = map.getZoom();
+  const bounds = map.getBounds().pad(0.08);
+  const shouldShow = zoom >= 15;
+
+  labelFeatures.forEach(labelFeature => {
+    const latlng = L.latLng(labelFeature.center[0], labelFeature.center[1]);
+    const visible = shouldShow && bounds.contains(latlng);
+
+    if (visible && !labelFeature.layer) {
+      labelFeature.layer = L.marker(latlng, {
+        icon: L.divIcon({
+          className: 'parcel-label-marker',
+          html: '<span>' + escapeHtml(labelFeature.label) + '</span>',
+          iconSize: null,
+          iconAnchor: [0, 0]
+        }),
+        interactive: true,
+        zIndexOffset: 650
+      });
+      labelFeature.layer.on('click', (event) => {
+        if (event.originalEvent) L.DomEvent.stop(event);
+        selectLabelFeature(labelFeature);
+      });
+      labelLayer.addLayer(labelFeature.layer);
+    } else if (!visible && labelFeature.layer) {
+      labelLayer.removeLayer(labelFeature.layer);
+      labelFeature.layer = null;
+    }
+  });
+}
+
+function selectLabelFeature(labelFeature) {
+  const latlng = L.latLng(labelFeature.center[0], labelFeature.center[1]);
+  showSelectedLandmark(latlng);
+  showRouteChoicePopup({
+    latlng: labelFeature.center,
+    name: labelFeature.code || [labelFeature.unit, labelFeature.number].filter(Boolean).join(' ') || labelFeature.label,
+    desc: labelFeature.code && labelFeature.number ? 'Diện tích: ' + labelFeature.number + ' ha' : labelFeature.label
+  });
 }
 
 function normalizeParcelSearchText(value) {
@@ -1417,3 +1650,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initMap();
   setTimeout(() => locateUser(!loadAppState()), 80);
 });
+
+
+
+

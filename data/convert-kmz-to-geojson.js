@@ -122,10 +122,11 @@ try {
 
   const kml = fs.readFileSync(kmlFile, 'utf8');
   const documentName = firstTag(kml, 'name') || path.basename(inputKmz, path.extname(inputKmz));
-  const placemarks = tagBlocks(kml, 'Placemark');
+  const placemarkMatches = [...kml.matchAll(/<(?:\w+:)?Placemark\b[^>]*>[\s\S]*?<\/(?:\w+:)?Placemark>/gi)];
   const features = [];
 
-  for (const placemark of placemarks) {
+  for (const match of placemarkMatches) {
+    const placemark = match[0];
     const geometry = parseGeometry(placemark);
     if (!geometry) continue;
 
@@ -136,6 +137,9 @@ try {
     if (name) properties.name = name;
     if (description) properties.description = description;
     if (styleUrl) properties.styleUrl = styleUrl;
+    const beforePlacemark = kml.slice(0, match.index);
+    const levelMatch = [...beforePlacemark.matchAll(/<(?:\w+:)?name[^>]*>\s*Level\s+(\d+)\s*<\/(?:\w+:)?name>/gi)].pop();
+    if (levelMatch) properties.level = Number(levelMatch[1]);
 
     features.push({ type: 'Feature', properties, geometry });
   }

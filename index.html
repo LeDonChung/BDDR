@@ -22,6 +22,7 @@
         </div>
         <div class="app-search" role="search">
             <input id="parcelSearchInput" type="search" autocomplete="off" placeholder="Tìm lô: C17, C18, 2/19..." aria-label="Tìm lô đất">
+            <button id="parcelSearchClearBtn" class="app-search__clear" type="button" title="Xóa tìm kiếm" aria-label="Xóa tìm kiếm">×</button>
             <div id="parcelSearchSuggestions" class="app-search__suggestions" hidden></div>
         </div>
         <div class="app-header__right">
@@ -176,8 +177,6 @@
 
     <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-omnivore/0.3.4/leaflet-omnivore.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
     <script src="script.js"></script>
     <script src="routing.js"></script>
 </body>

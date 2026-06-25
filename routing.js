@@ -147,7 +147,13 @@ function initRouting() {
   if (driveStopBtn) driveStopBtn.addEventListener('click', () => stopNavigation(false));
 
   const driveCloseBtn = navDriveCloseBtn();
-  if (driveCloseBtn) driveCloseBtn.addEventListener('click', () => stopNavigation(false));
+  if (driveCloseBtn) {
+    driveCloseBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      stopNavigation(false);
+    }, true);
+  }
 
   const driveRecenterBtn = navDriveRecenterBtn();
   if (driveRecenterBtn) driveRecenterBtn.addEventListener('click', recenterNavigation);
