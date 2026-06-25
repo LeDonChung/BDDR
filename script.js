@@ -242,12 +242,19 @@ async function loadDefaultKML() {
 function loadPMTilesLayer() {
   if (pmtilesLayer || !window.protomapsL) return;
 
+  // Đặt pmtilesPane dưới rotatePane (nếu có) để lớp vector PMTiles xoay theo bản đồ
+  // giống tilePane/overlayPane chuẩn. Nếu không, các thửa đất sẽ đứng yên khi xoay.
+  const rotateParent = map.getPane('rotatePane') || map.getPane('mapPane');
   if (!map.getPane('pmtilesPane')) {
-    map.createPane('pmtilesPane');
-    map.getPane('pmtilesPane').style.zIndex = '420';
-    map.getPane('pmtilesPane').style.pointerEvents = 'none';
-    map.getPane('pmtilesPane').style.background = 'transparent';
+    map.createPane('pmtilesPane', rotateParent);
   }
+  const pmtilesPaneEl = map.getPane('pmtilesPane');
+  if (rotateParent && pmtilesPaneEl.parentNode !== rotateParent) {
+    rotateParent.appendChild(pmtilesPaneEl);
+  }
+  pmtilesPaneEl.style.zIndex = '420';
+  pmtilesPaneEl.style.pointerEvents = 'none';
+  pmtilesPaneEl.style.background = 'transparent';
 
   class BDDRVectorSymbolizer {
     draw(context, geom, z, feature) {
