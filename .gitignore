@@ -20,3 +20,4 @@ yarn-error.log*
 BDDR Tong.kml
 data/BDDR Tong.kml
 data/BDDR.geojson
+data/.*
