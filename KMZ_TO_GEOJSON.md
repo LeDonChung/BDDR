@@ -105,3 +105,33 @@ https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.geojson
 3. GitHub Pages chỉ tải app tĩnh, còn dữ liệu lớn được fetch từ R2.
 
 Lưu ý cho người dùng mạng 5G: file GeoJSON rất lớn, lần tải đầu có thể lâu. App có cache IndexedDB nên các lần sau sẽ đỡ tải lại nếu version dữ liệu không đổi.
+
+## PMTiles cho iPhone/mobile
+
+GeoJSON lớn không phù hợp với iPhone vì Safari phải tải và parse toàn bộ file vào RAM. Dự án hiện đã chuyển runtime sang PMTiles:
+
+```text
+https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.pmtiles
+```
+
+Quy trình tạo dữ liệu mới:
+
+```powershell
+npm run convert:all
+```
+
+Hoặc chạy từng bước:
+
+```powershell
+npm run convert:kmz
+npm run convert:dxf-labels
+npm run convert:pmtiles
+```
+
+Sau đó upload file sau lên R2:
+
+```text
+data/BDDR.pmtiles
+```
+
+Lưu ý: `convert:pmtiles` cần Docker Desktop đang chạy vì script dùng tippecanoe container. File `data/BDDR.geojson` và `data/BDDR.pmtiles` là file build local, không commit lên GitHub.

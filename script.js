@@ -25,10 +25,11 @@ let parcelSearchResults = [];
 let labelFeatures = [];
 let labelsLoaded = false;
 let labelLayer = null;
+let pmtilesLayer = null;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
-const GEOJSON_SOURCE = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.geojson';
+const PMTILES_SOURCE = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.pmtiles';
 const LABELS_SOURCE = 'data/BDDR-labels.geojson';
 const GEOJSON_DATA_VERSION = '1.0.1';
 const KML_CACHE_DB = 'bddr-map-cache';
@@ -201,42 +202,69 @@ async function loadDefaultKML() {
   }
 
   isInitialKMLLoading = true;
-  updateLoadingProgress(5, 'Đang kiểm tra dữ liệu...');
+  updateLoadingProgress(8, 'Đang tải lớp bản đồ PMTiles...');
 
   try {
-    const cachedGeoJson = await loadCachedKMLText();
-    if (cachedGeoJson) {
-      updateLoadingProgress(45, 'Đang tải dữ liệu...');
-      runKMLParseWhenIdle(cachedGeoJson);
-      return;
-    }
+    loadPMTilesLayer();
+    updateLoadingProgress(55, 'Đang tải dữ liệu tìm kiếm...');
+    await awaitLabelsLoad();
 
-    updateLoadingProgress(12, 'Đang tải dữ liệu GeoJSON...');
-    const response = await fetch(GEOJSON_SOURCE);
-    if (!response.ok) throw new Error('HTTP ' + response.status);
+    kmlLoaded = true;
+    kmlFeatures = [];
+    kmlActiveFeatures = new Set();
+    kmlFeatureGrid = new Map();
+    kmlLargeFeatures = [];
+    ctyCodeLabelBounds = [];
+    buildParcelSearchIndex();
 
-    updateLoadingProgress(36, 'Đang nhận dữ liệu GeoJSON...');
-    const geoJsonText = await response.text();
-
-    updateLoadingProgress(44, 'Đang lưu dữ liệu vào máy...');
-    const cacheSaved = await saveCachedKMLText(geoJsonText);
-    if (!cacheSaved) showToast('Không đủ dung lượng lưu cache, lần sau có thể tải lại', 3200);
-
-    updateLoadingProgress(50, 'Đang chuẩn bị dữ liệu...');
-    runKMLParseWhenIdle(geoJsonText);
+    finishLoadingProgress('Đã sẵn sàng');
+    showToast('Đã tải bản đồ dạng PMTiles');
   } catch (err) {
     console.error(err);
     isInitialKMLLoading = false;
-    showToast('Không thể tải file GeoJSON');
+    showToast('Không thể tải PMTiles');
     setOverlayVisible(false);
   }
 }
 
-function runKMLParseWhenIdle(geoJsonText) {
-  const run = () => parseAndIndexGeoJSON(geoJsonText);
-  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
-  else setTimeout(run, 200);
+function loadPMTilesLayer() {
+  if (pmtilesLayer || !window.protomapsL) return;
+
+  class BDDRVectorSymbolizer {
+    draw(context, geom, z, feature) {
+      const props = feature && feature.props ? feature.props : {};
+      const isDetailLabel = props.level === 4 || props.level === '4';
+      const isLine = feature && (feature.geomType === 2 || feature.type === 2);
+      context.save();
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+      context.strokeStyle = '#ffd84d';
+      context.lineWidth = isDetailLabel ? 1.15 : 1.45;
+      context.globalAlpha = isDetailLabel ? 0.82 : 0.95;
+      context.fillStyle = 'rgba(255, 216, 77, 0.08)';
+      context.beginPath();
+      for (const poly of geom) {
+        for (let i = 0; i < poly.length; i++) {
+          const point = poly[i];
+          if (i === 0) context.moveTo(point.x, point.y);
+          else context.lineTo(point.x, point.y);
+        }
+      }
+      if (!isLine) context.fill();
+      context.stroke();
+      context.restore();
+    }
+  }
+
+  pmtilesLayer = protomapsL.leafletLayer({
+    url: PMTILES_SOURCE,
+    paintRules: [{ dataLayer: 'bddr', symbolizer: new BDDRVectorSymbolizer() }],
+    labelRules: [],
+    maxDataZoom: 16
+  });
+  pmtilesLayer.addTo(map);
 }
+
 function openKMLCacheDB() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) {
@@ -356,7 +384,6 @@ function parseAndIndexGeoJSON(geoJsonText) {
     updateLoadingProgress(72, 'Đang gom nhãn và lập chỉ mục...');
     classifyCtyCodeLabelClusters();
     buildKMLSpatialIndex();
-    awaitLabelsLoad();
     buildParcelSearchIndex();
     finishLoadingProgress('Đã sẵn sàng');
     scheduleVisibleKMLRender(360);
