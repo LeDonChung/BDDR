@@ -83,3 +83,25 @@ data/BDDR-labels.geojson
 ```
 
 File label này chứa các point có thuộc tính như `label`, `code`, `unit`, `number`, ví dụ `C2 13/2024`, `CT75 305`, diện tích `8,27`.
+
+## Deploy với Cloudflare R2
+
+Để tránh GitHub bị nặng và vượt giới hạn 100 MB/file, file lớn `data/BDDR.geojson` không được commit lên GitHub.
+
+Workflow hiện tại:
+
+1. Chạy convert ở máy local:
+
+```powershell
+npm run convert:kmz
+```
+
+2. Upload file vừa tạo lên Cloudflare R2 tại đường dẫn public:
+
+```text
+https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.geojson
+```
+
+3. GitHub Pages chỉ tải app tĩnh, còn dữ liệu lớn được fetch từ R2.
+
+Lưu ý cho người dùng mạng 5G: file GeoJSON rất lớn, lần tải đầu có thể lâu. App có cache IndexedDB nên các lần sau sẽ đỡ tải lại nếu version dữ liệu không đổi.

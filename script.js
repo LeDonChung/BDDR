@@ -28,7 +28,7 @@ let labelLayer = null;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
-const GEOJSON_SOURCE = 'data/BDDR.geojson';
+const GEOJSON_SOURCE = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.geojson';
 const LABELS_SOURCE = 'data/BDDR-labels.geojson';
 const GEOJSON_DATA_VERSION = '1.0.1';
 const KML_CACHE_DB = 'bddr-map-cache';
@@ -1650,6 +1650,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initMap();
   setTimeout(() => locateUser(!loadAppState()), 80);
 });
+
 
 
 
