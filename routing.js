@@ -25,6 +25,8 @@ const REROUTE_COOLDOWN_MS = 20000;
 const ARRIVAL_METERS = 25;
 const OFF_ROUTE_CONFIRM_MS = 5000;
 const ROUTE_REQUEST_TIMEOUT_MS = 12000;
+const EXACT_DESTINATION_CONNECT_METERS = 5;
+const FINAL_ACCESS_SPEED_MPS = 1.4;
 
 
 const routePanel = () => $('routePanel');
@@ -265,7 +267,8 @@ function displayRoute(route, options) {
   options = options || {};
   clearRouteLayers();
 
-  const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+  const routeShape = buildRouteCoordsToExactDestination(route.geometry.coordinates.map(c => [c[1], c[0]]));
+  const coords = routeShape.coords;
   routeLayer = L.polyline(coords, {
     color: '#93a4bd',
     weight: 5,
@@ -294,11 +297,12 @@ function displayRoute(route, options) {
     fitRouteBounds(routeLayer.getBounds());
   }
 
-  const distance = (route.distance / 1000).toFixed(2);
-  const duration = Math.round(route.duration / 60);
+  activeRoute = normalizeRoute(route, coords, routeShape.finalAccessDistance);
+
+  const distance = (activeRoute.totalDistance / 1000).toFixed(2);
+  const duration = Math.round(activeRoute.totalDuration / 60);
   routeDistanceEl().textContent = distance + ' km';
   routeDurationEl().textContent = duration + ' phút';
-  activeRoute = normalizeRoute(route, coords);
 
   let stepsHTML = '';
   activeRoute.steps.forEach((step, index) => {
@@ -314,6 +318,22 @@ function displayRoute(route, options) {
   if (isNavigating) {
     updateNavStatus(options.silent ? 'Đã tính lại tuyến đường.' : 'Đang dẫn đường.');
   }
+}
+
+function buildRouteCoordsToExactDestination(coords) {
+  const out = Array.isArray(coords) ? coords.slice() : [];
+  if (!out.length || !endPoint) {
+    return { coords: out, finalAccessDistance: 0 };
+  }
+
+  const last = out[out.length - 1];
+  const distance = L.latLng(last[0], last[1]).distanceTo(L.latLng(endPoint[0], endPoint[1]));
+  if (distance <= EXACT_DESTINATION_CONNECT_METERS) {
+    return { coords: out, finalAccessDistance: 0 };
+  }
+
+  out.push([endPoint[0], endPoint[1]]);
+  return { coords: out, finalAccessDistance: distance };
 }
 
 function showFallbackRoute() {
@@ -690,7 +710,8 @@ function onDeviceOrientation(event) {
   }
 }
 
-function normalizeRoute(route, coords) {
+function normalizeRoute(route, coords, finalAccessDistance) {
+  finalAccessDistance = finalAccessDistance || 0;
   const cumulative = buildCumulativeDistances(coords);
   const steps = [];
   let accumulated = 0;
@@ -708,11 +729,28 @@ function normalizeRoute(route, coords) {
     });
   });
 
+  if (finalAccessDistance > EXACT_DESTINATION_CONNECT_METERS) {
+    const totalFromCoords = cumulative[cumulative.length - 1] || accumulated + finalAccessDistance;
+    const finalStartDistance = Math.max(0, totalFromCoords - finalAccessDistance);
+    const lastStep = steps[steps.length - 1];
+    if (lastStep && lastStep.endDistance > finalStartDistance) {
+      lastStep.endDistance = finalStartDistance;
+      lastStep.distance = Math.max(0, lastStep.endDistance - lastStep.startDistance);
+    }
+
+    steps.push({
+      instruction: 'Đi thẳng vào lô đã chọn',
+      distance: finalAccessDistance,
+      startDistance: finalStartDistance,
+      endDistance: totalFromCoords
+    });
+  }
+
   return {
     coords,
     cumulative,
-    totalDistance: route.distance || cumulative[cumulative.length - 1] || 0,
-    totalDuration: route.duration || 0,
+    totalDistance: cumulative[cumulative.length - 1] || route.distance || 0,
+    totalDuration: (route.duration || 0) + (finalAccessDistance / FINAL_ACCESS_SPEED_MPS),
     steps
   };
 }
