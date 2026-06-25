@@ -51,6 +51,7 @@ const navDriveEta       = () => $('navDriveEta');
 const navDriveStatus    = () => $('navDriveStatus');
 const navDriveHeading   = () => $('navDriveHeading');
 const navDriveStopBtn   = () => $('navDriveStopBtn');
+const navDriveCloseBtn  = () => $('navDriveCloseBtn');
 const navDriveRecenterBtn = () => $('navDriveRecenterBtn');
 
 function openRoutePanel() {
@@ -144,6 +145,9 @@ function initRouting() {
 
   const driveStopBtn = navDriveStopBtn();
   if (driveStopBtn) driveStopBtn.addEventListener('click', () => stopNavigation(false));
+
+  const driveCloseBtn = navDriveCloseBtn();
+  if (driveCloseBtn) driveCloseBtn.addEventListener('click', () => stopNavigation(false));
 
   const driveRecenterBtn = navDriveRecenterBtn();
   if (driveRecenterBtn) driveRecenterBtn.addEventListener('click', recenterNavigation);
