@@ -3,6 +3,9 @@ let map;
 let kmlLayer = null;
 let userMarker = null;
 let userAccuracyCircle = null;
+let currentUserHeading = null;
+let appliedMarkerAngle = null;
+let rotateTileRefreshTimer = null;
 let selectedLandmarkMarker = null;
 let lastFeature = null;
 let pendingRouteDestination = null;
@@ -92,6 +95,7 @@ function initMap() {
   const savedState = loadAppState();
   const initialCenter = savedState && savedState.center ? savedState.center : DEFAULT_CENTER;
   const initialZoom = savedState && Number.isFinite(savedState.zoom) ? savedState.zoom : DEFAULT_ZOOM;
+  const initialBearing = savedState && Number.isFinite(savedState.bearing) ? savedState.bearing : 0;
 
   map = L.map('map', {
     center: initialCenter,
@@ -104,7 +108,14 @@ function initMap() {
     zoomAnimation: false,
     markerZoomAnimation: false,
     tap: true,
-    tapTolerance: FEATURE_CLICK_TOLERANCE_PX
+    tapTolerance: FEATURE_CLICK_TOLERANCE_PX,
+    rotate: true,
+    touchRotate: true,
+    bearing: initialBearing,
+    rotateControl: {
+      closeOnZeroBearing: false,
+      position: 'topleft'
+    }
   });
 
   currentBaseLayer = savedState && savedState.baseLayer === 'street' ? osmLayer : satelliteLayer;
@@ -135,6 +146,7 @@ function initMap() {
   });
   map.on('baselayerchange', onBaseLayerChange);
   map.on('click', onMapBackgroundClick);
+  map.on('rotate', onMapRotate);
 
   $('locateBtn').addEventListener('click', locateUser);
   $('routeBtn').addEventListener('click', promptRoutePick);
@@ -218,17 +230,24 @@ async function loadDefaultKML() {
     buildParcelSearchIndex();
 
     finishLoadingProgress('Đã sẵn sàng');
-    showToast('Đã tải bản đồ dạng PMTiles');
+    showToast('Đã tải bản đồ');
   } catch (err) {
     console.error(err);
     isInitialKMLLoading = false;
-    showToast('Không thể tải PMTiles');
+    showToast('Không thể tải bản đồ');
     setOverlayVisible(false);
   }
 }
 
 function loadPMTilesLayer() {
   if (pmtilesLayer || !window.protomapsL) return;
+
+  if (!map.getPane('pmtilesPane')) {
+    map.createPane('pmtilesPane');
+    map.getPane('pmtilesPane').style.zIndex = '420';
+    map.getPane('pmtilesPane').style.pointerEvents = 'none';
+    map.getPane('pmtilesPane').style.background = 'transparent';
+  }
 
   class BDDRVectorSymbolizer {
     draw(context, geom, z, feature) {
@@ -258,6 +277,8 @@ function loadPMTilesLayer() {
 
   pmtilesLayer = protomapsL.leafletLayer({
     url: PMTILES_SOURCE,
+    pane: 'pmtilesPane',
+    backgroundColor: 'rgba(0,0,0,0)',
     paintRules: [{ dataLayer: 'bddr', symbolizer: new BDDRVectorSymbolizer() }],
     labelRules: [],
     maxDataZoom: 16
@@ -346,9 +367,11 @@ function saveAppStateDebounced() {
 function saveAppState() {
   if (!map) return;
   const center = map.getCenter();
+  const bearing = (typeof map.getBearing === 'function') ? map.getBearing() : 0;
   localStorage.setItem(APP_STATE_KEY, JSON.stringify({
     center: [center.lat, center.lng],
     zoom: map.getZoom(),
+    bearing: Number.isFinite(bearing) ? bearing : 0,
     baseLayer: currentBaseLayer === satelliteLayer ? 'satellite' : 'street'
   }));
 }
@@ -1377,6 +1400,11 @@ function showRouteChoicePopup(destination) {
   pendingRouteDestination = destination;
   if (typeof closeRoutePanel === 'function') closeRoutePanel();
 
+  if (!map.getPane('routeChoicePane')) {
+    map.createPane('routeChoicePane');
+    map.getPane('routeChoicePane').style.zIndex = '1200';
+  }
+
   const latlng = normalizeDestinationLatLng(destination.latlng);
   const title = destination.name || 'Điểm đã chọn';
   const coords = formatLatLng({ lat: latlng[0], lng: latlng[1] });
@@ -1416,9 +1444,13 @@ function showRouteChoicePopup(destination) {
   });
 
   routeChoicePopup = L.popup({
+    pane: 'routeChoicePane',
     className: 'route-choice-popup',
     closeButton: true,
     autoPan: true,
+    autoPanPaddingTopLeft: L.point(24, 96),
+    autoPanPaddingBottomRight: L.point(24, 24),
+    offset: L.point(0, -28),
     maxWidth: 300,
     minWidth: 230
   })
@@ -1630,31 +1662,109 @@ function locateUser(pan) {  if (pan === undefined) pan = true;
   );
 }
 
-function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
-  if (userMarker) map.removeLayer(userMarker);
-  if (userAccuracyCircle) map.removeLayer(userAccuracyCircle);
+// ===== MAP ROTATION (2-finger rotate like Google Maps) =====
+function onMapRotate() {
+  // Update heading arrow immediately, compensating for map bearing (no lag).
+  updateUserMarkerRotation(true);
+  // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tắt bám hướng để user tự do định hướng.
+  if (typeof programmaticBearing !== 'undefined' && !programmaticBearing) {
+    if (typeof followHeading !== 'undefined' && followHeading) {
+      followHeading = false;
+      if (typeof updateDriveHeadingStatus === 'function') updateDriveHeadingStatus();
+    }
+  }
+  scheduleRotateTileRefresh();
+  saveAppStateDebounced();
+}
 
-  const hasHeading = Number.isFinite(heading);
-  const rotation = hasHeading ? ' style="transform: rotate(' + heading.toFixed(0) + 'deg)"' : '';
-  const markerClass = 'user-marker' + (hasHeading ? ' user-marker--heading' : '');
-  const icon = L.divIcon({
-    className: '',
-    html: '<div class="user-marker-wrap"' + rotation + '><div class="' + markerClass + '"></div></div>',
-    iconSize: [32, 32],
-    iconAnchor: [16, 16]
-  });
-  userMarker = L.marker(latlng, { icon, interactive: false }).addTo(map);
+function scheduleRotateTileRefresh() {
+  if (rotateTileRefreshTimer) return;
+  rotateTileRefreshTimer = setTimeout(() => {
+    rotateTileRefreshTimer = null;
+    try {
+      if (currentBaseLayer && typeof currentBaseLayer._onMoveEnd === 'function') {
+        currentBaseLayer._onMoveEnd();
+      }
+    } catch (e) { /* ignore */ }
+  }, 180);
+}
+
+// Rotate the heading arrow in place (no marker rebuild) -> smooth + continuous.
+// When the map is rotated, the arrow compensates for bearing to point the true heading.
+function updateUserMarkerRotation(instant) {
+  if (!userMarker) return;
+  const el = userMarker.getElement();
+  if (!el) return;
+  const wrap = el.querySelector('.user-marker-wrap');
+  const dot = el.querySelector('.user-marker');
+  if (!wrap || !dot) return;
+
+  const hasHeading = Number.isFinite(currentUserHeading);
+  dot.classList.toggle('user-marker--heading', hasHeading);
+
+  if (!hasHeading) {
+    wrap.style.transition = '';
+    wrap.style.transform = '';
+    appliedMarkerAngle = null;
+    return;
+  }
+
+  const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
+    ? map.getBearing()
+    : 0;
+  const target = (((currentUserHeading - bearing) % 360) + 360) % 360;
+
+  if (appliedMarkerAngle === null) {
+    appliedMarkerAngle = target;
+  } else {
+    let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
+    appliedMarkerAngle += delta;
+  }
+
+  wrap.style.transition = instant ? 'none' : 'transform 0.18s ease-out';
+  wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
+}
+function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
+  // When the compass is active, onDeviceOrientation drives the arrow continuously.
+  // Only use heading from GPS/movement when there is no compass.
+  if (Number.isFinite(heading)) {
+    currentUserHeading = heading;
+  } else if (!(typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive)) {
+    currentUserHeading = null;
+  }
+
+  if (userMarker) {
+    userMarker.setLatLng(latlng);
+  } else {
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="user-marker-wrap"><div class="user-marker"></div></div>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
+    userMarker = L.marker(latlng, { icon, interactive: false }).addTo(map);
+  }
 
   if (accuracy && accuracy > 0) {
-    userAccuracyCircle = L.circle(latlng, {
-      radius: accuracy,
-      color: '#4f8cff',
-      weight: 1,
-      fillColor: '#4f8cff',
-      fillOpacity: 0.1,
-      interactive: false
-    }).addTo(map);
+    if (userAccuracyCircle) {
+      userAccuracyCircle.setLatLng(latlng);
+      userAccuracyCircle.setRadius(accuracy);
+    } else {
+      userAccuracyCircle = L.circle(latlng, {
+        radius: accuracy,
+        color: '#4f8cff',
+        weight: 1,
+        fillColor: '#4f8cff',
+        fillOpacity: 0.1,
+        interactive: false
+      }).addTo(map);
+    }
+  } else if (userAccuracyCircle) {
+    map.removeLayer(userAccuracyCircle);
+    userAccuracyCircle = null;
   }
+
+  updateUserMarkerRotation();
 
   if (typeof startPoint !== 'undefined') {
     startPoint = latlng;
@@ -1677,6 +1787,9 @@ document.addEventListener('DOMContentLoaded', () => {
   initMap();
   setTimeout(() => locateUser(!loadAppState()), 80);
 });
+
+
+
 
 
 
