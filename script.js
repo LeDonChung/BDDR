@@ -16,7 +16,7 @@ let kmlLargeFeatures = [];
 let ctyCodeLabelBounds = [];
 let currentBaseLayer = null;
 let routeChoicePopup = null;
-let showCtyCodeLabels = false;
+let showCtyCodeLabels = true;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
@@ -111,9 +111,6 @@ function initMap() {
 
   $('locateBtn').addEventListener('click', locateUser);
   $('routeBtn').addEventListener('click', promptRoutePick);
-  const labelsBtn = $('labelsBtn');
-  if (labelsBtn) labelsBtn.addEventListener('click', toggleKMLLabels);
-  updateLabelsButton();
 
   initRouting();
   initRouteConfirmModal();
@@ -141,21 +138,6 @@ function promptRoutePick() {
   if (typeof closeRoutePanel === 'function') closeRoutePanel();
   closeRouteConfirmModal();
   showToast('Chạm điểm bất kỳ trên bản đồ để chỉ đường');
-}
-
-function toggleKMLLabels() {
-  showCtyCodeLabels = !showCtyCodeLabels;
-  updateLabelsButton();
-  scheduleVisibleKMLRender(0);
-}
-
-function updateLabelsButton() {
-  const btn = $('labelsBtn');
-  if (!btn) return;
-  btn.classList.toggle('icon-btn--active', showCtyCodeLabels);
-  btn.title = showCtyCodeLabels ? 'Ẩn mã CTY/số' : 'Hiện mã CTY/số';
-  btn.setAttribute('aria-label', btn.title);
-  btn.setAttribute('aria-pressed', showCtyCodeLabels ? 'true' : 'false');
 }
 
 // ===== KML =====
@@ -607,7 +589,6 @@ function onKMLZoomStart() {
 }
 
 function isFeatureRenderable(feature, bounds, zoom) {
-  if (feature.isCtyCodeLabel && !showCtyCodeLabels) return false;
   return zoom >= feature.minZoom && bounds.intersects(feature.bounds);
 }
 
