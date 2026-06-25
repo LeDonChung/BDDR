@@ -17,22 +17,32 @@ let ctyCodeLabelBounds = [];
 let currentBaseLayer = null;
 let routeChoicePopup = null;
 let showCtyCodeLabels = true;
+let kmlStyleMode = 'street';
+let isInitialKMLLoading = false;
+let parcelSearchIndex = [];
+let parcelSearchActiveIndex = -1;
+let parcelSearchResults = [];
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
 const KMZ_SOURCE = 'data/BDDR.kmz';
-const KML_RENDER_PADDING = 0.15;
-const KML_RENDER_CHUNK_SIZE = 180;
-const KML_RENDER_DEBOUNCE_MS = 180;
+const KMZ_DATA_VERSION = '1.0.0';
+const KML_CACHE_DB = 'bddr-map-cache';
+const KML_CACHE_STORE = 'kml';
+const KML_CACHE_KEY = 'bddr-kml';
+const APP_STATE_KEY = 'bddr-app-state';
+const KML_RENDER_PADDING = 0.08;
+const KML_RENDER_CHUNK_SIZE = 120;
+const KML_RENDER_DEBOUNCE_MS = 220;
 const KML_INDEX_CELL_SIZE = 0.02;
 const KML_TINY_POLYGON_MAX_SPAN = 0.00035;
-const KML_DETAIL_TEXT_MIN_ZOOM = 16;
+const KML_DETAIL_TEXT_MIN_ZOOM = 13;
 const KML_OVERVIEW_TEXT_MIN_ZOOM = 11;
-const KML_DETAIL_LINE_MIN_ZOOM = 12;
+const KML_DETAIL_LINE_MIN_ZOOM = 11;
 const KML_SHORT_LINE_MAX_SPAN = 0.001;
-const KML_SHORT_LINE_MIN_ZOOM = 16;
+const KML_SHORT_LINE_MIN_ZOOM = 13;
 const KML_SMALL_POLYGON_MAX_SPAN = 0.0012;
-const KML_SMALL_POLYGON_MIN_ZOOM = 14;
+const KML_SMALL_POLYGON_MIN_ZOOM = 12;
 const KML_LARGE_POLYGON_MIN_ZOOM = 11;
 const KML_LINE_MIN_ZOOM = 10;
 const KML_CODE_LABEL_CLUSTER_CELL_SIZE = 0.00045;
@@ -74,9 +84,13 @@ const satelliteLayer = L.tileLayer(
 
 // ===== INIT MAP =====
 function initMap() {
+  const savedState = loadAppState();
+  const initialCenter = savedState && savedState.center ? savedState.center : DEFAULT_CENTER;
+  const initialZoom = savedState && Number.isFinite(savedState.zoom) ? savedState.zoom : DEFAULT_ZOOM;
+
   map = L.map('map', {
-    center: DEFAULT_CENTER,
-    zoom: DEFAULT_ZOOM,
+    center: initialCenter,
+    zoom: initialZoom,
     zoomControl: true,
     preferCanvas: true,
     renderer: L.canvas({ padding: 0.5, tolerance: FEATURE_CLICK_TOLERANCE_PX }),
@@ -88,13 +102,14 @@ function initMap() {
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX
   });
 
-  currentBaseLayer = osmLayer;
+  currentBaseLayer = savedState && savedState.baseLayer === 'street' ? osmLayer : satelliteLayer;
+  kmlStyleMode = currentBaseLayer === satelliteLayer ? 'satellite' : 'street';
   currentBaseLayer.addTo(map);
 
   L.control.layers(
     {
-      'Đường phố OSM': osmLayer,
-      'Vệ tinh Esri': satelliteLayer
+      'Đường phố': osmLayer,
+      'Vệ tinh': satelliteLayer
     },
     null,
     {
@@ -105,8 +120,15 @@ function initMap() {
 
   map.on('movestart', cancelKMLRender);
   map.on('zoomstart', onKMLZoomStart);
-  map.on('moveend', () => scheduleVisibleKMLRender(90));
-  map.on('zoomend', () => scheduleVisibleKMLRender(260));
+  map.on('moveend', () => {
+    scheduleVisibleKMLRender(140);
+    saveAppStateDebounced();
+  });
+  map.on('zoomend', () => {
+    scheduleVisibleKMLRender(320);
+    saveAppStateDebounced();
+  });
+  map.on('baselayerchange', onBaseLayerChange);
   map.on('click', onMapBackgroundClick);
 
   $('locateBtn').addEventListener('click', locateUser);
@@ -114,6 +136,7 @@ function initMap() {
 
   initRouting();
   initRouteConfirmModal();
+  initParcelSearch();
   setOverlayVisible(false);
 }
 
@@ -124,6 +147,32 @@ function setOverlayVisible(visible) {
   else ov.classList.add('hidden');
 }
 
+
+function updateLoadingProgress(percent, message) {
+  const value = Math.max(0, Math.min(100, Math.round(percent || 0)));
+  const overlay = $('loadingOverlay');
+  const text = $('loadingText');
+  const bar = $('loadingBar');
+  const label = $('loadingPercent');
+  const progress = overlay ? overlay.querySelector('.loading-progress') : null;
+
+  if (!isInitialKMLLoading) return;
+  if (overlay) overlay.classList.remove('hidden');
+  if (text && message) text.textContent = message;
+  if (bar) bar.style.width = value + '%';
+  if (label) label.textContent = value + '%';
+  if (progress) progress.setAttribute('aria-valuenow', String(value));
+}
+
+function finishLoadingProgress(message) {
+  if (!isInitialKMLLoading) return;
+  updateLoadingProgress(100, message || 'Hoàn tất');
+  clearTimeout(finishLoadingProgress._timer);
+  finishLoadingProgress._timer = setTimeout(() => {
+    isInitialKMLLoading = false;
+    setOverlayVisible(false);
+  }, 350);
+}
 function showToast(message, ms) {
   ms = ms || 2200;
   const t = $('toast');
@@ -141,28 +190,51 @@ function promptRoutePick() {
 }
 
 // ===== KML =====
-function loadDefaultKML() {
+async function loadDefaultKML() {
   if (kmlLoaded) {
     scheduleVisibleKMLRender();
     return;
   }
-  setOverlayVisible(true);
-  fetch(KMZ_SOURCE)
-    .then(r => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.arrayBuffer();
-    })
-    .then(buffer => extractKMLFromKMZ(buffer))
-    .then(xml => {
-      const run = () => parseAndIndexKML(xml);
-      if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
-      else setTimeout(run, 200);
-    })
-    .catch(err => {
-      console.error(err);
-      showToast('Không thể tải file KMZ');
-      setOverlayVisible(false);
-    });
+
+  isInitialKMLLoading = true;
+  updateLoadingProgress(5, 'Đang kiểm tra dữ liệu...');
+
+  try {
+    const cachedXml = await loadCachedKMLText();
+    if (cachedXml) {
+      updateLoadingProgress(45, 'Đang tải dữ liệu...');
+      runKMLParseWhenIdle(cachedXml);
+      return;
+    }
+
+    updateLoadingProgress(12, 'Đang tải dữ liệu bản đồ...');
+    const response = await fetch(KMZ_SOURCE);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+
+    updateLoadingProgress(24, 'Đang nhận file KMZ...');
+    const buffer = await response.arrayBuffer();
+
+    updateLoadingProgress(36, 'Đang giải nén KMZ...');
+    const xml = await extractKMLFromKMZ(buffer);
+
+    updateLoadingProgress(44, 'Đang lưu dữ liệu vào máy...');
+    const cacheSaved = await saveCachedKMLText(xml);
+    if (!cacheSaved) showToast('Không đủ dung lượng lưu cache, lần sau có thể tải lại', 3200);
+
+    updateLoadingProgress(50, 'Đang chuẩn bị dữ liệu...');
+    runKMLParseWhenIdle(xml);
+  } catch (err) {
+    console.error(err);
+    isInitialKMLLoading = false;
+    showToast('Không thể tải file KMZ');
+    setOverlayVisible(false);
+  }
+}
+
+function runKMLParseWhenIdle(xml) {
+  const run = () => parseAndIndexKML(xml);
+  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
+  else setTimeout(run, 200);
 }
 
 function extractKMLFromKMZ(buffer) {
@@ -188,6 +260,93 @@ function extractKMLFromKMZ(buffer) {
   });
 }
 
+function openKMLCacheDB() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      resolve(null);
+      return;
+    }
+
+    const request = indexedDB.open(KML_CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(KML_CACHE_STORE, { keyPath: 'key' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function loadCachedKMLText() {
+  const db = await openKMLCacheDB();
+  if (!db) return null;
+
+  return new Promise((resolve) => {
+    const tx = db.transaction(KML_CACHE_STORE, 'readonly');
+    const request = tx.objectStore(KML_CACHE_STORE).get(KML_CACHE_KEY);
+    request.onsuccess = () => {
+      const record = request.result;
+      resolve(record && record.version === KMZ_DATA_VERSION ? record.xml : null);
+    };
+    request.onerror = () => resolve(null);
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => db.close();
+  });
+}
+
+async function saveCachedKMLText(xml) {
+  let db;
+  try {
+    db = await openKMLCacheDB();
+  } catch (err) {
+    console.warn('Không thể mở cache IndexedDB', err);
+    return false;
+  }
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    const tx = db.transaction(KML_CACHE_STORE, 'readwrite');
+    tx.objectStore(KML_CACHE_STORE).put({
+      key: KML_CACHE_KEY,
+      version: KMZ_DATA_VERSION,
+      xml,
+      savedAt: Date.now()
+    });
+    tx.oncomplete = () => {
+      db.close();
+      resolve(true);
+    };
+    tx.onerror = () => {
+      db.close();
+      resolve(false);
+    };
+  });
+}
+
+function loadAppState() {
+  try {
+    const state = JSON.parse(localStorage.getItem(APP_STATE_KEY) || 'null');
+    if (!state || !Array.isArray(state.center) || state.center.length !== 2) return null;
+    if (!state.center.every(Number.isFinite)) return null;
+    return state;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveAppStateDebounced() {
+  clearTimeout(saveAppStateDebounced._timer);
+  saveAppStateDebounced._timer = setTimeout(saveAppState, 350);
+}
+
+function saveAppState() {
+  if (!map) return;
+  const center = map.getCenter();
+  localStorage.setItem(APP_STATE_KEY, JSON.stringify({
+    center: [center.lat, center.lng],
+    zoom: map.getZoom(),
+    baseLayer: currentBaseLayer === satelliteLayer ? 'satellite' : 'street'
+  }));
+}
 function parseAndIndexKML(xmlText) {
   try {
     if (kmlLayer) {
@@ -202,6 +361,7 @@ function parseAndIndexKML(xmlText) {
     kmlLargeFeatures = [];
     ctyCodeLabelBounds = [];
 
+    updateLoadingProgress(52, 'Đang đọc dữ liệu thửa đất...');
     const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
     if (doc.getElementsByTagName('parsererror').length) {
       throw new Error('Parse error');
@@ -245,13 +405,16 @@ function parseAndIndexKML(xmlText) {
     }
 
     kmlLoaded = true;
+    updateLoadingProgress(72, 'Đang gom nhãn và lập chỉ mục...');
     classifyCtyCodeLabelClusters();
     buildKMLSpatialIndex();
-    scheduleVisibleKMLRender();
-    setOverlayVisible(false);
+    buildParcelSearchIndex();
+    finishLoadingProgress('Đã sẵn sàng');
+    scheduleVisibleKMLRender(360);
     showToast('Đã sẵn sàng ' + count + ' đối tượng');
   } catch (err) {
     console.error(err);
+    isInitialKMLLoading = false;
     setOverlayVisible(false);
     showToast('Lỗi phân tích KML');
   }
@@ -322,8 +485,8 @@ function scheduleKMLLoad() {
     return;
   }
   const run = () => loadDefaultKML();
-  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1200 });
-  else setTimeout(run, 300);
+  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 4000 });
+  else setTimeout(run, 1600);
 }
 
 function cancelKMLRender() {
@@ -525,7 +688,13 @@ function renderVisibleKML() {
     }
   });
 
-  if (!pending.length) return;
+  if (!pending.length) {
+    if (!kmlLayer._initialRenderDone) {
+      kmlLayer._initialRenderDone = true;
+      finishLoadingProgress('Đã sẵn sàng');
+    }
+    return;
+  }
 
   let index = 0;
   const renderChunk = () => {
@@ -541,9 +710,13 @@ function renderVisibleKML() {
       }
     }
 
+
     if (index < pending.length) {
       if ('requestIdleCallback' in window) requestIdleCallback(renderChunk, { timeout: 300 });
       else requestAnimationFrame(renderChunk);
+    } else if (!kmlLayer._initialRenderDone) {
+      kmlLayer._initialRenderDone = true;
+      finishLoadingProgress('Đã sẵn sàng');
     }
   };
 
@@ -601,12 +774,13 @@ function removeFeatureLayer(feature) {
 
 function buildFeatureLayer(feature) {
   let layer;
+  const style = getKMLFeatureStyle();
   const options = {
-    color: '#ffd84d',
-    weight: 1.5,
-    opacity: 0.95,
-    fillColor: '#ffd84d',
-    fillOpacity: 0.08,
+    color: style.color,
+    weight: style.weight,
+    opacity: style.opacity,
+    fillColor: style.fillColor,
+    fillOpacity: style.fillOpacity,
     lineCap: 'round',
     lineJoin: 'round',
     interactive: feature.clickable,
@@ -632,6 +806,28 @@ function buildFeatureLayer(feature) {
   return layer;
 }
 
+function onBaseLayerChange(event) {
+  currentBaseLayer = event.layer;
+  kmlStyleMode = currentBaseLayer === satelliteLayer ? 'satellite' : 'street';
+  updateKMLLayerStyles();
+  saveAppState();
+}
+
+function getKMLFeatureStyle() {
+  if (kmlStyleMode === 'satellite') {
+    return { color: '#ffd84d', fillColor: '#ffd84d', opacity: 0.95, fillOpacity: 0.08, weight: 1.5 };
+  }
+  return { color: '#2563eb', fillColor: '#60a5fa', opacity: 0.9, fillOpacity: 0.045, weight: 1.7 };
+}
+
+function updateKMLLayerStyles() {
+  const style = getKMLFeatureStyle();
+  kmlActiveFeatures.forEach(feature => {
+    if (feature.layer && typeof feature.layer.setStyle === 'function') {
+      feature.layer.setStyle(style);
+    }
+  });
+}
 function textOf(node, tag) {
   const els = node.getElementsByTagName(tag);
   return els && els.length ? (els[0].textContent || '').trim() : '';
@@ -678,6 +874,163 @@ function parseCoords(coordNodes) {
   return out;
 }
 
+function initParcelSearch() {
+  const input = $('parcelSearchInput');
+  const suggestions = $('parcelSearchSuggestions');
+  if (!input || !suggestions) return;
+
+  input.addEventListener('input', () => showParcelSearchSuggestions(input.value));
+  input.addEventListener('focus', () => showParcelSearchSuggestions(input.value));
+  input.addEventListener('keydown', onParcelSearchKeyDown);
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest || !event.target.closest('.app-search')) hideParcelSearchSuggestions();
+  });
+}
+
+function buildParcelSearchIndex() {
+  parcelSearchIndex = kmlFeatures
+    .filter(feature => feature.clickable && feature.type === 'polygon')
+    .map((feature, index) => {
+      const name = cleanDestinationName(feature.name || ('Lô ' + (index + 1)));
+      const desc = String(feature.desc || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      const label = name === 'Điểm đã chọn' && desc ? desc : name;
+      return {
+        feature,
+        label,
+        desc,
+        center: [feature.centerLat, feature.centerLng],
+        searchText: normalizeParcelSearchText([name, desc].join(' '))
+      };
+    })
+    .filter(item => item.searchText.length > 0);
+}
+
+function normalizeParcelSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9\/]+/g, ' ')
+    .trim();
+}
+
+function showParcelSearchSuggestions(query) {
+  const suggestions = $('parcelSearchSuggestions');
+  if (!suggestions) return;
+
+  const normalized = normalizeParcelSearchText(query);
+  parcelSearchActiveIndex = -1;
+
+  if (!normalized) {
+    suggestions.hidden = true;
+    suggestions.innerHTML = '';
+    parcelSearchResults = [];
+    return;
+  }
+
+  if (!kmlLoaded || !parcelSearchIndex.length) {
+    parcelSearchResults = [];
+    suggestions.hidden = false;
+    suggestions.innerHTML = '<div class="search-suggestion--empty">Dữ liệu lô đang tải...</div>';
+    return;
+  }
+
+  const terms = normalized.split(/\s+/).filter(Boolean);
+  parcelSearchResults = parcelSearchIndex
+    .map(item => ({ item, score: scoreParcelSearchItem(item, terms, normalized) }))
+    .filter(result => result.score > 0)
+    .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label, 'vi'))
+    .slice(0, 8)
+    .map(result => result.item);
+
+  suggestions.hidden = false;
+  if (!parcelSearchResults.length) {
+    suggestions.innerHTML = '<div class="search-suggestion--empty">Không tìm thấy lô phù hợp</div>';
+    return;
+  }
+
+  suggestions.innerHTML = parcelSearchResults.map((item, index) =>
+    '<button type="button" class="search-suggestion" data-search-index="' + index + '">' +
+      '<strong>' + escapeHtml(item.label) + '</strong>' +
+      '<span>' + escapeHtml(item.desc || formatLatLng({ lat: item.center[0], lng: item.center[1] })) + '</span>' +
+    '</button>'
+  ).join('');
+
+  suggestions.querySelectorAll('[data-search-index]').forEach(button => {
+    button.addEventListener('click', () => selectParcelSearchResult(Number(button.dataset.searchIndex)));
+  });
+}
+
+function scoreParcelSearchItem(item, terms, normalizedQuery) {
+  if (!item.searchText) return 0;
+  if (item.searchText === normalizedQuery) return 1000;
+  if (item.searchText.startsWith(normalizedQuery)) return 800;
+  if (item.searchText.includes(normalizedQuery)) return 600;
+
+  let score = 0;
+  for (const term of terms) {
+    if (!item.searchText.includes(term)) return 0;
+    score += item.searchText.startsWith(term) ? 120 : 60;
+  }
+  return score;
+}
+
+function onParcelSearchKeyDown(event) {
+  const suggestions = $('parcelSearchSuggestions');
+  if (!suggestions || suggestions.hidden) return;
+
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (!parcelSearchResults.length) return;
+    const delta = event.key === 'ArrowDown' ? 1 : -1;
+    parcelSearchActiveIndex = (parcelSearchActiveIndex + delta + parcelSearchResults.length) % parcelSearchResults.length;
+    updateParcelSearchActiveItem();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    selectParcelSearchResult(parcelSearchActiveIndex >= 0 ? parcelSearchActiveIndex : 0);
+  } else if (event.key === 'Escape') {
+    hideParcelSearchSuggestions();
+  }
+}
+
+function updateParcelSearchActiveItem() {
+  const suggestions = $('parcelSearchSuggestions');
+  if (!suggestions) return;
+  suggestions.querySelectorAll('.search-suggestion').forEach((button, index) => {
+    button.classList.toggle('is-active', index === parcelSearchActiveIndex);
+  });
+}
+
+function hideParcelSearchSuggestions() {
+  const suggestions = $('parcelSearchSuggestions');
+  if (!suggestions) return;
+  suggestions.hidden = true;
+}
+
+function selectParcelSearchResult(index) {
+  const item = parcelSearchResults[index];
+  if (!item) return;
+
+  const input = $('parcelSearchInput');
+  if (input) input.value = item.label;
+  hideParcelSearchSuggestions();
+
+  const latlng = L.latLng(item.center[0], item.center[1]);
+  showSelectedLandmark(latlng);
+  if (item.feature && item.feature.bounds && map) {
+    map.fitBounds(item.feature.bounds, { padding: [70, 70], maxZoom: 18 });
+  } else if (map) {
+    map.setView(latlng, Math.max(map.getZoom(), 17));
+  }
+
+  if (typeof beginDirectRoute === 'function') {
+    beginDirectRoute(item.center, item.label);
+  } else {
+    showRouteChoicePopup({ latlng: item.center, name: item.label, desc: item.desc });
+  }
+}
 function attachFeatureHandlers(layer) {
   layer.on('click', onFeatureClick);
   layer.on('mouseover', () => {
@@ -1062,5 +1415,5 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
 // ===== BOOT =====
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
-  setTimeout(() => locateUser(true), 300);
+  setTimeout(() => locateUser(!loadAppState()), 80);
 });
