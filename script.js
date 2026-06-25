@@ -11,6 +11,7 @@ let kmlLoaded = false;
 let kmlRenderTimer = null;
 let kmlRenderJob = 0;
 let currentBaseLayer = null;
+let routeChoicePopup = null;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
@@ -80,7 +81,7 @@ function initMap() {
   map.on('click', onMapBackgroundClick);
 
   $('locateBtn').addEventListener('click', locateUser);
-  $('routeBtn').addEventListener('click', openRoutePanel);
+  $('routeBtn').addEventListener('click', promptRoutePick);
 
   initRouting();
   initRouteConfirmModal();
@@ -102,6 +103,12 @@ function showToast(message, ms) {
   t.classList.add('show');
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+function promptRoutePick() {
+  if (typeof closeRoutePanel === 'function') closeRoutePanel();
+  closeRouteConfirmModal();
+  showToast('Chạm điểm bất kỳ trên bản đồ để chỉ đường');
 }
 
 // ===== KML =====
@@ -355,22 +362,39 @@ function onMapBackgroundClick(e) {
   const hit = findRenderedFeatureAt(e.latlng);
   if (hit) {
     selectFeature(hit.layer, e.latlng);
+    return;
   }
+  selectMapPoint(e.latlng);
 }
 
 function selectFeature(layer, clickLatLng) {
   lastFeature = layer;
 
   const center = clickLatLng || (layer.getBounds ? layer.getBounds().getCenter() : layer.getLatLng());
-  const name = (layer.options && layer.options.pmName) || 'Thửa đất';
+  const name = cleanDestinationName((layer.options && layer.options.pmName) || 'Điểm đã chọn');
   const desc = (layer.options && layer.options.pmDesc) || formatArea(layer);
 
   showSelectedLandmark(center);
-  showRouteConfirmModal({
+  showRouteChoicePopup({
     latlng: [center.lat, center.lng],
     name,
     desc
   });
+}
+
+function selectMapPoint(latlng) {
+  if (!latlng) return;
+  showSelectedLandmark(latlng);
+  showRouteChoicePopup({
+    latlng: [latlng.lat, latlng.lng],
+    name: 'Điểm đã chọn',
+    desc: formatLatLng(latlng)
+  });
+}
+
+function cleanDestinationName(name) {
+  const value = String(name || '').trim();
+  return /^Style\d+$/i.test(value) ? 'Điểm đã chọn' : (value || 'Điểm đã chọn');
 }
 
 function findRenderedFeatureAt(latlng) {
@@ -398,6 +422,65 @@ function findRenderedFeatureAt(latlng) {
   });
 
   return best;
+}
+
+function showRouteChoicePopup(destination) {
+  pendingRouteDestination = destination;
+  if (typeof closeRoutePanel === 'function') closeRoutePanel();
+
+  const latlng = normalizeDestinationLatLng(destination.latlng);
+  const title = destination.name || 'Điểm đã chọn';
+  const coords = formatLatLng({ lat: latlng[0], lng: latlng[1] });
+  const subtitle = destination.desc && destination.desc !== coords
+    ? destination.desc + ' • ' + coords
+    : coords;
+
+  const content = document.createElement('div');
+  content.className = 'route-choice';
+  content.innerHTML =
+    '<p class="route-choice__eyebrow">Điểm đến</p>' +
+    '<h3>' + escapeHtml(title) + '</h3>' +
+    '<p class="route-choice__coords">' + escapeHtml(subtitle) + '</p>' +
+    '<div class="route-choice__actions">' +
+      '<button type="button" class="btn btn--primary" data-route-action="direct">' +
+        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>' +
+        'Chỉ đường trực tiếp' +
+      '</button>' +
+      '<button type="button" class="btn btn--ghost" data-route-action="google">' +
+        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>' +
+        'Google Maps' +
+      '</button>' +
+    '</div>';
+
+  L.DomEvent.disableClickPropagation(content);
+  content.querySelector('[data-route-action="direct"]').addEventListener('click', () => {
+    if (routeChoicePopup) map.closePopup(routeChoicePopup);
+    if (typeof beginDirectRoute === 'function') {
+      beginDirectRoute(latlng, title);
+    }
+  });
+  content.querySelector('[data-route-action="google"]').addEventListener('click', () => {
+    if (routeChoicePopup) map.closePopup(routeChoicePopup);
+    if (typeof openGoogleMapsRoute === 'function') {
+      openGoogleMapsRoute(latlng, title);
+    }
+  });
+
+  routeChoicePopup = L.popup({
+    className: 'route-choice-popup',
+    closeButton: true,
+    autoPan: true,
+    maxWidth: 300,
+    minWidth: 230
+  })
+    .setLatLng(latlng)
+    .setContent(content)
+    .openOn(map);
+}
+
+function normalizeDestinationLatLng(latlng) {
+  if (Array.isArray(latlng)) return [Number(latlng[0]), Number(latlng[1])];
+  return [Number(latlng.lat), Number(latlng.lng)];
 }
 
 function pointInAnyPolygon(latlng, rings) {
@@ -539,16 +622,9 @@ function closeRouteConfirmModal() {
 function confirmSelectedRoute() {
   if (!pendingRouteDestination) return;
 
-  if (typeof setRouteDestination === 'function') {
-    setRouteDestination(pendingRouteDestination.latlng, pendingRouteDestination.name);
-  }
   closeRouteConfirmModal();
-
-  if (typeof openRoutePanel === 'function') openRoutePanel();
-  if (typeof startPoint !== 'undefined' && startPoint && typeof tryAutoRoute === 'function') {
-    tryAutoRoute();
-  } else if (typeof locateUser === 'function') {
-    locateUser(true);
+  if (typeof beginDirectRoute === 'function') {
+    beginDirectRoute(pendingRouteDestination.latlng, pendingRouteDestination.name);
   }
 }
 
@@ -597,6 +673,9 @@ function locateUser(pan) {  if (pan === undefined) pan = true;
       const c = map.getCenter();
       setUserPosition([c.lat, c.lng], null, pan);
       scheduleKMLLoad();
+      if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
+        tryAutoRoute();
+      }
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
   );

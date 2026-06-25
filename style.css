@@ -13,12 +13,17 @@
   --primary-2: #1a73e8;
   --danger: #ff5b5b;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --font-ui: Arial, sans-serif;
 }
 
 html, body {
   width: 100%;
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
@@ -81,7 +86,7 @@ html, body {
   top: 56px; left: 0; right: 0; bottom: 0;
   background: #0a0f1c;
 }
-.leaflet-container { background: #0a0f1c; font-family: inherit; }
+.leaflet-container { background: #0a0f1c; font-family: var(--font-ui); }
 .leaflet-container .leaflet-interactive,
 .leaflet-container.is-selecting-feature {
   cursor: pointer;
@@ -268,6 +273,11 @@ html, body {
 .map-fab:active {
   transform: scale(0.96);
 }
+.map-fab--active {
+  color: #fff;
+  background: #1a73e8;
+  border-color: transparent;
+}
 .nav-drive__bottom {
   position: absolute;
   left: 50%;
@@ -342,6 +352,50 @@ html, body {
 }
 .popup-action:hover { background: #6aa0ff; }
 .leaflet-popup-close-button { color: var(--muted) !important; }
+
+.route-choice-popup .leaflet-popup-content {
+  width: 260px !important;
+  margin: 0 !important;
+}
+.route-choice {
+  padding: 14px;
+}
+.route-choice__eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.route-choice h3 {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.25;
+  font-weight: 700;
+  padding-right: 18px;
+  margin-bottom: 5px;
+}
+.route-choice__coords {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+.route-choice__actions {
+  display: grid;
+  gap: 8px;
+}
+.route-choice .btn {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 8px;
+  white-space: normal;
+}
+.route-choice .btn--ghost {
+  border-color: rgba(255, 255, 255, 0.14);
+}
 
 /* ====== ROUTE CONFIRM MODAL ====== */
 .modal {
