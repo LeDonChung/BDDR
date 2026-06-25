@@ -15,14 +15,21 @@ if (-not $docker) {
 }
 
 $dataDir = Resolve-Path -LiteralPath $PSScriptRoot
-$inputName = Split-Path -Leaf $InputGeoJson
+$tempName = 'BDDR-tippecanoe.geojsonl'
+$tempPath = Join-Path $PSScriptRoot $tempName
 $outputName = Split-Path -Leaf $OutputPmTiles
 
-Write-Host "Dang tao $OutputPmTiles tu $InputGeoJson ..."
+Write-Host "Dang chuan bi GeoJSONL cho tippecanoe ..."
+node (Join-Path $PSScriptRoot 'prepare-geojson-for-tippecanoe.js') $InputGeoJson $tempPath
+if ($LASTEXITCODE -ne 0) {
+    throw "prepare-geojson-for-tippecanoe failed with exit code $LASTEXITCODE"
+}
+
+Write-Host "Dang tao $OutputPmTiles tu $tempPath ..."
 
 docker run --rm `
     -v "${dataDir}:/data" `
-    maptiler/tippecanoe:latest `
+    strikehawk/tippecanoe:latest `
     tippecanoe `
     -o "/data/$outputName" `
     --force `
@@ -32,7 +39,7 @@ docker run --rm `
     --drop-densest-as-needed `
     --extend-zooms-if-still-dropping `
     --no-tile-size-limit `
-    "/data/$inputName"
+    "/data/$tempName"
 
 if ($LASTEXITCODE -ne 0) {
     throw "tippecanoe/docker failed with exit code $LASTEXITCODE"
@@ -43,4 +50,3 @@ if (-not (Test-Path -LiteralPath $OutputPmTiles)) {
 }
 
 Write-Host "Da tao $OutputPmTiles"
-
