@@ -23,3 +23,4 @@ data/BDDR.geojson
 data/.*
 data/BDDR.pmtiles
 data/BDDR-tippecanoe.geojsonl
+data/BDDR.mbtiles

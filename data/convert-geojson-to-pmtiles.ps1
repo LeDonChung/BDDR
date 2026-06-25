@@ -17,6 +17,8 @@ if (-not $docker) {
 $dataDir = Resolve-Path -LiteralPath $PSScriptRoot
 $tempName = 'BDDR-tippecanoe.geojsonl'
 $tempPath = Join-Path $PSScriptRoot $tempName
+$mbtilesName = 'BDDR.mbtiles'
+$mbtilesPath = Join-Path $PSScriptRoot $mbtilesName
 $outputName = Split-Path -Leaf $OutputPmTiles
 
 Write-Host "Dang chuan bi GeoJSONL cho tippecanoe ..."
@@ -25,13 +27,13 @@ if ($LASTEXITCODE -ne 0) {
     throw "prepare-geojson-for-tippecanoe failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Dang tao $OutputPmTiles tu $tempPath ..."
+Write-Host "Dang tao MBTiles tam: $mbtilesPath ..."
 
 docker run --rm `
     -v "${dataDir}:/data" `
     strikehawk/tippecanoe:latest `
     tippecanoe `
-    -o "/data/$outputName" `
+    -o "/data/$mbtilesName" `
     --force `
     --layer=bddr `
     --minimum-zoom=8 `
@@ -43,6 +45,24 @@ docker run --rm `
 
 if ($LASTEXITCODE -ne 0) {
     throw "tippecanoe/docker failed with exit code $LASTEXITCODE"
+}
+
+if (-not (Test-Path -LiteralPath $mbtilesPath)) {
+    throw "Khong tao duoc MBTiles: $mbtilesPath"
+}
+
+Write-Host "Dang convert MBTiles sang PMTiles: $OutputPmTiles ..."
+if (Test-Path -LiteralPath $OutputPmTiles) {
+    Remove-Item -LiteralPath $OutputPmTiles -Force
+}
+
+docker run --rm `
+    -v "${dataDir}:/data" `
+    protomaps/go-pmtiles:latest `
+    convert "/data/$mbtilesName" "/data/$outputName"
+
+if ($LASTEXITCODE -ne 0) {
+    throw "pmtiles convert failed with exit code $LASTEXITCODE"
 }
 
 if (-not (Test-Path -LiteralPath $OutputPmTiles)) {
