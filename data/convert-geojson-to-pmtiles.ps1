@@ -22,7 +22,7 @@ Write-Host "Dang tao $OutputPmTiles tu $InputGeoJson ..."
 
 docker run --rm `
     -v "${dataDir}:/data" `
-    ghcr.io/felt/tippecanoe:latest `
+    maptiler/tippecanoe:latest `
     tippecanoe `
     -o "/data/$outputName" `
     --force `
@@ -43,3 +43,4 @@ if (-not (Test-Path -LiteralPath $OutputPmTiles)) {
 }
 
 Write-Host "Da tao $OutputPmTiles"
+
