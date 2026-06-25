@@ -10,13 +10,39 @@ let kmlFeatures = [];
 let kmlLoaded = false;
 let kmlRenderTimer = null;
 let kmlRenderJob = 0;
+let kmlActiveFeatures = new Set();
+let kmlFeatureGrid = new Map();
+let kmlLargeFeatures = [];
+let ctyCodeLabelBounds = [];
 let currentBaseLayer = null;
 let routeChoicePopup = null;
+let showCtyCodeLabels = false;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
-const KML_RENDER_PADDING = 0.2;
-const KML_RENDER_CHUNK_SIZE = 600;
+const KMZ_SOURCE = 'data/BDDR.kmz';
+const KML_RENDER_PADDING = 0.15;
+const KML_RENDER_CHUNK_SIZE = 180;
+const KML_RENDER_DEBOUNCE_MS = 180;
+const KML_INDEX_CELL_SIZE = 0.02;
+const KML_TINY_POLYGON_MAX_SPAN = 0.00035;
+const KML_DETAIL_TEXT_MIN_ZOOM = 16;
+const KML_OVERVIEW_TEXT_MIN_ZOOM = 11;
+const KML_DETAIL_LINE_MIN_ZOOM = 12;
+const KML_SHORT_LINE_MAX_SPAN = 0.001;
+const KML_SHORT_LINE_MIN_ZOOM = 16;
+const KML_SMALL_POLYGON_MAX_SPAN = 0.0012;
+const KML_SMALL_POLYGON_MIN_ZOOM = 14;
+const KML_LARGE_POLYGON_MIN_ZOOM = 11;
+const KML_LINE_MIN_ZOOM = 10;
+const KML_CODE_LABEL_CLUSTER_CELL_SIZE = 0.00045;
+const KML_CODE_LABEL_MIN_WIDTH = 0.00035;
+const KML_CODE_LABEL_MAX_WIDTH = 0.00108;
+const KML_CODE_LABEL_MIN_HEIGHT = 0.00018;
+const KML_CODE_LABEL_MAX_HEIGHT = 0.00092;
+const KML_CODE_LABEL_MIN_PARTS = 40;
+const KML_CODE_LABEL_MAX_PARTS = 950;
+const KML_CODE_LABEL_LINE_PADDING = 0.00075;
 const FEATURE_CLICK_TOLERANCE_PX = 18;
 
 const $ = (id) => document.getElementById(id);
@@ -77,11 +103,17 @@ function initMap() {
     }
   ).addTo(map);
 
-  map.on('moveend zoomend', scheduleVisibleKMLRender);
+  map.on('movestart', cancelKMLRender);
+  map.on('zoomstart', onKMLZoomStart);
+  map.on('moveend', () => scheduleVisibleKMLRender(90));
+  map.on('zoomend', () => scheduleVisibleKMLRender(260));
   map.on('click', onMapBackgroundClick);
 
   $('locateBtn').addEventListener('click', locateUser);
   $('routeBtn').addEventListener('click', promptRoutePick);
+  const labelsBtn = $('labelsBtn');
+  if (labelsBtn) labelsBtn.addEventListener('click', toggleKMLLabels);
+  updateLabelsButton();
 
   initRouting();
   initRouteConfirmModal();
@@ -111,6 +143,21 @@ function promptRoutePick() {
   showToast('Chạm điểm bất kỳ trên bản đồ để chỉ đường');
 }
 
+function toggleKMLLabels() {
+  showCtyCodeLabels = !showCtyCodeLabels;
+  updateLabelsButton();
+  scheduleVisibleKMLRender(0);
+}
+
+function updateLabelsButton() {
+  const btn = $('labelsBtn');
+  if (!btn) return;
+  btn.classList.toggle('icon-btn--active', showCtyCodeLabels);
+  btn.title = showCtyCodeLabels ? 'Ẩn mã CTY/số' : 'Hiện mã CTY/số';
+  btn.setAttribute('aria-label', btn.title);
+  btn.setAttribute('aria-pressed', showCtyCodeLabels ? 'true' : 'false');
+}
+
 // ===== KML =====
 function loadDefaultKML() {
   if (kmlLoaded) {
@@ -118,11 +165,12 @@ function loadDefaultKML() {
     return;
   }
   setOverlayVisible(true);
-  fetch('BDDR Tong.kml')
+  fetch(KMZ_SOURCE)
     .then(r => {
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
+      return r.arrayBuffer();
     })
+    .then(buffer => extractKMLFromKMZ(buffer))
     .then(xml => {
       const run = () => parseAndIndexKML(xml);
       if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
@@ -130,9 +178,32 @@ function loadDefaultKML() {
     })
     .catch(err => {
       console.error(err);
-      showToast('Không thể tải file KML');
+      showToast('Không thể tải file KMZ');
       setOverlayVisible(false);
     });
+}
+
+function extractKMLFromKMZ(buffer) {
+  if (!window.fflate || typeof window.fflate.unzip !== 'function') {
+    throw new Error('Thiếu thư viện giải nén KMZ');
+  }
+
+  return new Promise((resolve, reject) => {
+    window.fflate.unzip(new Uint8Array(buffer), (err, files) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      const kmlName = Object.keys(files).find(name => /\.kml$/i.test(name));
+      if (!kmlName) {
+        reject(new Error('KMZ không chứa file KML'));
+        return;
+      }
+
+      resolve(window.fflate.strFromU8(files[kmlName]));
+    });
+  });
 }
 
 function parseAndIndexKML(xmlText) {
@@ -144,6 +215,10 @@ function parseAndIndexKML(xmlText) {
     kmlLayer = L.featureGroup();
     kmlLayer.addTo(map);
     kmlFeatures = [];
+    kmlActiveFeatures = new Set();
+    kmlFeatureGrid = new Map();
+    kmlLargeFeatures = [];
+    ctyCodeLabelBounds = [];
 
     const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
     if (doc.getElementsByTagName('parsererror').length) {
@@ -156,13 +231,14 @@ function parseAndIndexKML(xmlText) {
       const pm = placemarks[i];
       const name = textOf(pm, 'name') || ('Thửa ' + (i + 1));
       const desc = textOf(pm, 'description') || '';
+      const level = getPlacemarkLevel(pm);
 
       const polygons = pm.getElementsByTagName('Polygon');
       for (let p = 0; p < polygons.length; p++) {
         const rings = polygons[p].getElementsByTagName('coordinates');
         const latlngs = parseCoords(rings);
         if (latlngs.length) {
-          kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc));
+          kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level));
           count++;
         }
       }
@@ -171,7 +247,7 @@ function parseAndIndexKML(xmlText) {
         const cs = lines[l].getElementsByTagName('coordinates');
         const latlngs = parseCoords(cs);
         if (latlngs.length) {
-          kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc));
+          kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level));
           count++;
         }
       }
@@ -180,13 +256,15 @@ function parseAndIndexKML(xmlText) {
         const cs = points[p].getElementsByTagName('coordinates');
         const latlngs = parseCoords(cs);
         if (latlngs.length) {
-          kmlFeatures.push(createFeatureRecord('point', latlngs[0], name, desc));
+          kmlFeatures.push(createFeatureRecord('point', latlngs[0], name, desc, level));
           count++;
         }
       }
     }
 
     kmlLoaded = true;
+    classifyCtyCodeLabelClusters();
+    buildKMLSpatialIndex();
     scheduleVisibleKMLRender();
     setOverlayVisible(false);
     showToast('Đã sẵn sàng ' + count + ' đối tượng');
@@ -197,18 +275,49 @@ function parseAndIndexKML(xmlText) {
   }
 }
 
-function createFeatureRecord(type, latlngs, name, desc) {
-  const bounds = type === 'point'
-    ? L.latLngBounds([latlngs])
-    : L.latLngBounds(flattenLatLngs(latlngs));
+function createFeatureRecord(type, latlngs, name, desc, level) {
+  const flatLatLngs = type === 'point' ? [latlngs] : flattenLatLngs(latlngs);
+  const bounds = L.latLngBounds(flatLatLngs);
+  const center = bounds.getCenter();
+  const latSpan = Math.abs(bounds.getNorth() - bounds.getSouth());
+  const lngSpan = Math.abs(bounds.getEast() - bounds.getWest());
+  const maxSpan = Math.max(latSpan, lngSpan);
+  const isTinyPolygon = type === 'polygon' && maxSpan > 0 && maxSpan <= KML_TINY_POLYGON_MAX_SPAN;
+  const isLabelShape = type === 'polygon' && maxSpan > 0 && maxSpan <= KML_SMALL_POLYGON_MAX_SPAN;
+  const isShortLine = type === 'line' && maxSpan > 0 && maxSpan <= KML_SHORT_LINE_MAX_SPAN;
+  const isDetailLevel = level === 4;
+
   return {
     type,
     latlngs,
     name,
     desc,
+    level,
     bounds,
+    centerLat: center.lat,
+    centerLng: center.lng,
+    maxSpan,
+    isLabelShape,
+    isCtyCodeLabel: false,
+    minZoom: getFeatureMinZoom(type, maxSpan, isDetailLevel),
+    clickable: !isLabelShape && !isShortLine && !isDetailLevel,
     layer: null
   };
+}
+
+function getFeatureMinZoom(type, maxSpan, isDetailLevel) {
+  if (type === 'line') {
+    if (maxSpan <= KML_SHORT_LINE_MAX_SPAN) return KML_SHORT_LINE_MIN_ZOOM;
+    return isDetailLevel ? KML_DETAIL_LINE_MIN_ZOOM : KML_LINE_MIN_ZOOM;
+  }
+  if (type === 'point') return KML_SMALL_POLYGON_MIN_ZOOM;
+  if (maxSpan <= KML_TINY_POLYGON_MAX_SPAN) {
+    return isDetailLevel ? KML_DETAIL_TEXT_MIN_ZOOM : KML_OVERVIEW_TEXT_MIN_ZOOM;
+  }
+  if (maxSpan <= KML_SMALL_POLYGON_MAX_SPAN) {
+    return isDetailLevel ? KML_SMALL_POLYGON_MIN_ZOOM : KML_OVERVIEW_TEXT_MIN_ZOOM;
+  }
+  return KML_LARGE_POLYGON_MIN_ZOOM;
 }
 
 function flattenLatLngs(latlngs) {
@@ -235,30 +344,202 @@ function scheduleKMLLoad() {
   else setTimeout(run, 300);
 }
 
-function scheduleVisibleKMLRender() {
+function cancelKMLRender() {
+  clearTimeout(kmlRenderTimer);
+  kmlRenderTimer = null;
+  kmlRenderJob++;
+}
+
+function scheduleVisibleKMLRender(delay) {
   if (!kmlLoaded || !kmlLayer) return;
   clearTimeout(kmlRenderTimer);
-  kmlRenderTimer = setTimeout(renderVisibleKML, 100);
+  kmlRenderTimer = setTimeout(renderVisibleKML, delay || KML_RENDER_DEBOUNCE_MS);
+}
+
+function buildKMLSpatialIndex() {
+  kmlFeatureGrid = new Map();
+  kmlLargeFeatures = [];
+
+  kmlFeatures.forEach(feature => {
+    if (feature.type === 'line' || feature.maxSpan > KML_INDEX_CELL_SIZE) {
+      kmlLargeFeatures.push(feature);
+      return;
+    }
+
+    const key = gridKey(feature.centerLat, feature.centerLng);
+    let zoomGrid = kmlFeatureGrid.get(feature.minZoom);
+    if (!zoomGrid) {
+      zoomGrid = new Map();
+      kmlFeatureGrid.set(feature.minZoom, zoomGrid);
+    }
+
+    let bucket = zoomGrid.get(key);
+    if (!bucket) {
+      bucket = [];
+      zoomGrid.set(key, bucket);
+    }
+    bucket.push(feature);
+  });
+}
+
+function classifyCtyCodeLabelClusters() {
+  const candidates = kmlFeatures.filter(feature =>
+    feature.type === 'polygon' &&
+    feature.level === 4 &&
+    feature.name === 'Style10' &&
+    feature.isLabelShape
+  );
+
+  if (!candidates.length) return;
+
+  const parents = candidates.map((_, index) => index);
+  const grid = new Map();
+
+  const find = (index) => {
+    let current = index;
+    while (parents[current] !== current) {
+      parents[current] = parents[parents[current]];
+      current = parents[current];
+    }
+    return current;
+  };
+
+  const union = (a, b) => {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA !== rootB) parents[rootB] = rootA;
+  };
+
+  candidates.forEach((feature, index) => {
+    const gx = Math.floor(feature.centerLng / KML_CODE_LABEL_CLUSTER_CELL_SIZE);
+    const gy = Math.floor(feature.centerLat / KML_CODE_LABEL_CLUSTER_CELL_SIZE);
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const nearby = grid.get((gx + dx) + ':' + (gy + dy));
+        if (!nearby) continue;
+
+        nearby.forEach(otherIndex => {
+          const other = candidates[otherIndex];
+          if (
+            Math.abs(feature.centerLng - other.centerLng) <= KML_CODE_LABEL_CLUSTER_CELL_SIZE &&
+            Math.abs(feature.centerLat - other.centerLat) <= KML_CODE_LABEL_CLUSTER_CELL_SIZE
+          ) {
+            union(index, otherIndex);
+          }
+        });
+      }
+    }
+
+    const key = gx + ':' + gy;
+    let bucket = grid.get(key);
+    if (!bucket) {
+      bucket = [];
+      grid.set(key, bucket);
+    }
+    bucket.push(index);
+  });
+
+  const clusters = new Map();
+  candidates.forEach((feature, index) => {
+    const root = find(index);
+    let cluster = clusters.get(root);
+    if (!cluster) {
+      cluster = [];
+      clusters.set(root, cluster);
+    }
+    cluster.push(feature);
+  });
+
+  clusters.forEach(cluster => {
+    const bounds = getFeatureClusterBounds(cluster);
+    if (!isCtyCodeLabelCluster(cluster, bounds)) return;
+    ctyCodeLabelBounds.push(bounds);
+    cluster.forEach(feature => {
+      feature.isCtyCodeLabel = true;
+    });
+  });
+
+  classifyCtyCodeLabelLines();
+}
+
+function getFeatureClusterBounds(cluster) {
+  let north = -Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let west = Infinity;
+
+  cluster.forEach(feature => {
+    north = Math.max(north, feature.bounds.getNorth());
+    south = Math.min(south, feature.bounds.getSouth());
+    east = Math.max(east, feature.bounds.getEast());
+    west = Math.min(west, feature.bounds.getWest());
+  });
+
+  return { north, south, east, west };
+}
+
+function isCtyCodeLabelCluster(cluster, bounds) {
+  if (cluster.length < KML_CODE_LABEL_MIN_PARTS || cluster.length > KML_CODE_LABEL_MAX_PARTS) {
+    return false;
+  }
+
+  const width = bounds.east - bounds.west;
+  const height = bounds.north - bounds.south;
+
+  return (
+    width >= KML_CODE_LABEL_MIN_WIDTH &&
+    width <= KML_CODE_LABEL_MAX_WIDTH &&
+    height >= KML_CODE_LABEL_MIN_HEIGHT &&
+    height <= KML_CODE_LABEL_MAX_HEIGHT
+  );
+}
+
+function classifyCtyCodeLabelLines() {
+  if (!ctyCodeLabelBounds.length) return;
+
+  kmlFeatures.forEach(feature => {
+    if (
+      feature.type !== 'line' ||
+      feature.level !== 4 ||
+      (feature.name !== 'Style12' && feature.name !== 'Style13')
+    ) {
+      return;
+    }
+
+    if (isFeatureNearCtyCodeBounds(feature)) {
+      feature.isCtyCodeLabel = true;
+      feature.clickable = false;
+    }
+  });
+}
+
+function isFeatureNearCtyCodeBounds(feature) {
+  return ctyCodeLabelBounds.some(bounds =>
+    feature.centerLng >= bounds.west - KML_CODE_LABEL_LINE_PADDING &&
+    feature.centerLng <= bounds.east + KML_CODE_LABEL_LINE_PADDING &&
+    feature.centerLat >= bounds.south - KML_CODE_LABEL_LINE_PADDING &&
+    feature.centerLat <= bounds.north + KML_CODE_LABEL_LINE_PADDING
+  );
 }
 
 function renderVisibleKML() {
   if (!kmlLoaded || !kmlLayer) return;
 
   const job = ++kmlRenderJob;
+  const zoom = map.getZoom();
   const bounds = map.getBounds().pad(KML_RENDER_PADDING);
   const pending = [];
 
-  kmlFeatures.forEach(feature => {
-    const visible = bounds.intersects(feature.bounds);
-    if (visible) {
-      if (!feature.layer) {
-        pending.push(feature);
-      }
-    } else {
-      if (feature.layer) {
-        kmlLayer.removeLayer(feature.layer);
-        feature.layer = null;
-      }
+  kmlActiveFeatures.forEach(feature => {
+    if (!isFeatureRenderable(feature, bounds, zoom)) {
+      removeFeatureLayer(feature);
+    }
+  });
+
+  getKMLRenderCandidates(bounds, zoom).forEach(feature => {
+    if (!feature.layer && isFeatureRenderable(feature, bounds, zoom)) {
+      pending.push(feature);
     }
   });
 
@@ -271,9 +552,10 @@ function renderVisibleKML() {
     const end = Math.min(index + KML_RENDER_CHUNK_SIZE, pending.length);
     for (; index < end; index++) {
       const feature = pending[index];
-      if (!feature.layer && bounds.intersects(feature.bounds)) {
+      if (!feature.layer && isFeatureRenderable(feature, bounds, zoom)) {
         feature.layer = buildFeatureLayer(feature);
         kmlLayer.addLayer(feature.layer);
+        kmlActiveFeatures.add(feature);
       }
     }
 
@@ -286,6 +568,56 @@ function renderVisibleKML() {
   renderChunk();
 }
 
+function getKMLRenderCandidates(bounds, zoom) {
+  const candidates = kmlLargeFeatures.slice();
+
+  const west = bounds.getWest();
+  const east = bounds.getEast();
+  const south = bounds.getSouth();
+  const north = bounds.getNorth();
+
+  const minX = Math.floor(Math.min(west, east) / KML_INDEX_CELL_SIZE);
+  const maxX = Math.floor(Math.max(west, east) / KML_INDEX_CELL_SIZE);
+  const minY = Math.floor(south / KML_INDEX_CELL_SIZE);
+  const maxY = Math.floor(north / KML_INDEX_CELL_SIZE);
+
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) {
+      const key = x + ':' + y;
+      kmlFeatureGrid.forEach((zoomGrid, minZoom) => {
+        if (zoom < minZoom) return;
+        const bucket = zoomGrid.get(key);
+        if (bucket) candidates.push(...bucket);
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function gridKey(lat, lng) {
+  return Math.floor(lng / KML_INDEX_CELL_SIZE) + ':' + Math.floor(lat / KML_INDEX_CELL_SIZE);
+}
+
+function onKMLZoomStart() {
+  cancelKMLRender();
+  kmlActiveFeatures.forEach(feature => {
+    if (!feature.clickable || feature.isLabelShape) removeFeatureLayer(feature);
+  });
+}
+
+function isFeatureRenderable(feature, bounds, zoom) {
+  if (feature.isCtyCodeLabel && !showCtyCodeLabels) return false;
+  return zoom >= feature.minZoom && bounds.intersects(feature.bounds);
+}
+
+function removeFeatureLayer(feature) {
+  if (!feature.layer) return;
+  kmlLayer.removeLayer(feature.layer);
+  feature.layer = null;
+  kmlActiveFeatures.delete(feature);
+}
+
 function buildFeatureLayer(feature) {
   let layer;
   const options = {
@@ -296,7 +628,7 @@ function buildFeatureLayer(feature) {
     fillOpacity: 0.08,
     lineCap: 'round',
     lineJoin: 'round',
-    interactive: true,
+    interactive: feature.clickable,
     bubblingMouseEvents: false,
     pmName: feature.name,
     pmDesc: feature.desc,
@@ -315,13 +647,36 @@ function buildFeatureLayer(feature) {
     });
   }
 
-  attachFeatureHandlers(layer);
+  if (feature.clickable) attachFeatureHandlers(layer);
   return layer;
 }
 
 function textOf(node, tag) {
   const els = node.getElementsByTagName(tag);
   return els && els.length ? (els[0].textContent || '').trim() : '';
+}
+
+function directTextOf(node, tag) {
+  if (!node || !node.childNodes) return '';
+  for (let i = 0; i < node.childNodes.length; i++) {
+    const child = node.childNodes[i];
+    if (child.nodeType === 1 && (child.localName || child.nodeName) === tag) {
+      return (child.textContent || '').trim();
+    }
+  }
+  return '';
+}
+
+function getPlacemarkLevel(placemark) {
+  let node = placemark ? placemark.parentNode : null;
+  while (node) {
+    if (node.nodeType === 1 && (node.localName || node.nodeName) === 'Folder') {
+      const match = directTextOf(node, 'name').match(/^Level\s+(\d+)/i);
+      if (match) return Number(match[1]);
+    }
+    node = node.parentNode;
+  }
+  return null;
 }
 
 function parseCoords(coordNodes) {
@@ -405,8 +760,8 @@ function findRenderedFeatureAt(latlng) {
   let bestDistance = Infinity;
   const tolerance = FEATURE_CLICK_TOLERANCE_PX;
 
-  kmlFeatures.forEach(feature => {
-    if (!feature.layer) return;
+  kmlActiveFeatures.forEach(feature => {
+    if (!feature.layer || !feature.clickable) return;
 
     if (feature.type === 'polygon' && pointInAnyPolygon(latlng, feature.latlngs)) {
       best = { layer: feature.layer, distance: 0 };
