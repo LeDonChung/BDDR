@@ -784,6 +784,7 @@ html, body {
   align-items: center;
   justify-content: center;
   transform-origin: 50% 50%;
+  will-change: transform;
 }
 .user-marker {
   width: 18px; height: 18px;
