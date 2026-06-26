@@ -70,7 +70,8 @@ const osmLayer = L.tileLayer(
   'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {
     attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 19,
+    maxZoom: 21,
+    maxNativeZoom: 19,
     minZoom: 2,
     updateWhenZooming: false,
     updateWhenIdle: true,
@@ -79,11 +80,13 @@ const osmLayer = L.tileLayer(
 );
 
 const satelliteLayer = L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  'https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
   {
-    attribution: 'Tiles &copy; Esri',
-    maxZoom: 19,
+    attribution: 'Imagery &copy; Google',
+    maxZoom: 21,
+    maxNativeZoom: 21,
     minZoom: 2,
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     updateWhenZooming: false,
     updateWhenIdle: true,
     keepBuffer: 2
@@ -100,13 +103,19 @@ function initMap() {
   map = L.map('map', {
     center: initialCenter,
     zoom: initialZoom,
+    maxZoom: 21,
     zoomControl: true,
     preferCanvas: true,
     renderer: L.canvas({ padding: 0.5, tolerance: FEATURE_CLICK_TOLERANCE_PX }),
     worldCopyJump: true,
-    fadeAnimation: false,
-    zoomAnimation: false,
-    markerZoomAnimation: false,
+    zoomSnap: 0.25,
+    zoomDelta: 0.5,
+    wheelPxPerZoomLevel: 72,
+    inertia: true,
+    inertiaDeceleration: 3400,
+    fadeAnimation: true,
+    zoomAnimation: true,
+    markerZoomAnimation: true,
     tap: true,
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX,
     rotate: true,

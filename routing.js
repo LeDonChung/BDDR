@@ -14,8 +14,10 @@ let followUser = true;
 let lastNavPosition = null;
 let lastRerouteAt = 0;
 let deviceHeading = null;
+let deviceHeadingRaw = null;
 let deviceOrientationActive = false;
 let lastHeadingSource = 'none';
+let markerRotationRafId = null;
 let wakeLock = null;
 let offRouteSince = null;
 let lastAccuracy = null;
@@ -483,8 +485,11 @@ async function startNavigation() {
   lastAccuracy = null;
   lastHeadingSource = 'none';
   navBearingCurrent = (map && typeof map.getBearing === 'function') ? map.getBearing() : 0;
-  checkLocationPermission();
+  // Request compass permission first, inside the user gesture. iOS Safari only
+  // allows DeviceOrientationEvent.requestPermission() within a user gesture, so call
+  // it before any other async work or the prompt is skipped and the compass never shows.
   await requestDeviceHeading(true);
+  checkLocationPermission();
   requestWakeLock();
   setNavigationDriveMode(true);
   updateNavigationButtons();
@@ -758,9 +763,16 @@ function stopDeviceHeading() {
   window.removeEventListener('deviceorientationabsolute', onDeviceOrientation, true);
   deviceOrientationActive = false;
   deviceHeading = null;
+  deviceHeadingRaw = null;
+  if (markerRotationRafId !== null) {
+    cancelAnimationFrame(markerRotationRafId);
+    markerRotationRafId = null;
+  }
 }
 
 function onDeviceOrientation(event) {
+  // iOS Safari: webkitCompassHeading is the true compass heading (clockwise from North).
+  // Android/Chrome: use absolute alpha (heading = 360 - alpha).
   const compassHeading = Number(event.webkitCompassHeading);
   const alpha = Number(event.alpha);
   let heading = null;
@@ -771,16 +783,42 @@ function onDeviceOrientation(event) {
     heading = 360 - alpha;
   }
 
-  if (Number.isFinite(heading)) {
-    deviceHeading = normalizeDegrees(heading);
-    lastHeadingSource = 'device';
-    // Lái mũi tên hướng liên tục theo la bàn -> xoay mượt, bù trừ góc xoay bản đồ.
-    currentUserHeading = deviceHeading;
-    if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(false);
-    // Khi đang dẫn đường và bám hướng, cho bản đồ xoay theo la bàn.
-    if (isNavigating && followHeading) setNavBearingTarget(deviceHeading);
-    throttledDriveHeadingStatus();
+  if (!Number.isFinite(heading)) return;
+
+  // Only store the raw value here. Smoothing + rendering run on requestAnimationFrame
+  // to avoid jitter (previously transform updated ~60x/s with a 0.18s CSS transition,
+  // which kept restarting the transition and jittered on iPhone).
+  deviceHeadingRaw = normalizeDegrees(heading);
+  lastHeadingSource = 'device';
+  startHeadingLoop();
+}
+
+// Low-pass filter the compass heading (shortest-path) and update the arrow + map
+// bearing on the animation frame -> smooth, no jitter.
+function startHeadingLoop() {
+  if (markerRotationRafId !== null) return;
+  markerRotationRafId = requestAnimationFrame(headingFrame);
+}
+
+function headingFrame() {
+  markerRotationRafId = null;
+  if (deviceHeadingRaw === null) return;
+
+  if (deviceHeading === null) {
+    deviceHeading = deviceHeadingRaw;
+  } else {
+    const delta = ((deviceHeadingRaw - deviceHeading) % 360 + 540) % 360 - 180;
+    deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
   }
+
+  currentUserHeading = deviceHeading;
+  if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
+  if (isNavigating && followHeading) setNavBearingTarget(deviceHeading);
+  throttledDriveHeadingStatus();
+
+  // Keep smoothing until converged to the raw value.
+  const remain = Math.abs(((deviceHeadingRaw - deviceHeading) % 360 + 540) % 360 - 180);
+  if (remain > 0.2) startHeadingLoop();
 }
 
 function throttledDriveHeadingStatus() {
@@ -811,20 +849,21 @@ function stopNavBearingLoop() {
 
 function navBearingFrame() {
   navBearingRafId = null;
-  if (!followHeading || !isNavigating || !map || typeof map.setBearing !== 'function') return;
+  if (!followHeading || !isNavigating || !map || typeof map.setBearing === 'function') return;
   if (!Number.isFinite(navBearingTarget)) { navBearingRafId = requestAnimationFrame(navBearingFrame); return; }
 
-  // Nội suy góc đường ngắn nhất -> xoay mượt, không quay vòng dài.
+  // Interpolate along the shortest arc -> smooth rotation, no long way around.
   let delta = ((navBearingTarget - navBearingCurrent) % 360 + 540) % 360 - 180;
   if (Math.abs(delta) < 0.3) {
     navBearingCurrent = navBearingTarget;
   } else {
     navBearingCurrent = (((navBearingCurrent + delta * 0.18) % 360) + 360) % 360;
+    // Only call setBearing when actually needed -> less tile redraw work on iPhone.
+    programmaticBearing = true;
+    map.setBearing(navBearingCurrent);
+    programmaticBearing = false;
   }
 
-  programmaticBearing = true;
-  map.setBearing(navBearingCurrent);
-  programmaticBearing = false;
   navBearingRafId = requestAnimationFrame(navBearingFrame);
 }
 
@@ -1147,5 +1186,3 @@ function estimateDurationMinutes(distanceMeters) {
 function escapeHtmlRoute(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-
-
