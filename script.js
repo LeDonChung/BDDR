@@ -70,7 +70,8 @@ const osmLayer = L.tileLayer(
   'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {
     attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 19,
+    maxZoom: 21,
+    maxNativeZoom: 19,
     minZoom: 2,
     updateWhenZooming: false,
     updateWhenIdle: true,
@@ -82,7 +83,8 @@ const satelliteLayer = L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   {
     attribution: 'Tiles &copy; Esri',
-    maxZoom: 19,
+    maxZoom: 21,
+    maxNativeZoom: 18,
     minZoom: 2,
     updateWhenZooming: false,
     updateWhenIdle: true,
@@ -100,6 +102,7 @@ function initMap() {
   map = L.map('map', {
     center: initialCenter,
     zoom: initialZoom,
+    maxZoom: 21,
     zoomControl: true,
     preferCanvas: true,
     renderer: L.canvas({ padding: 0.5, tolerance: FEATURE_CLICK_TOLERANCE_PX }),
