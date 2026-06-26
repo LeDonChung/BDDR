@@ -80,12 +80,13 @@ const osmLayer = L.tileLayer(
 );
 
 const satelliteLayer = L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  'https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
   {
-    attribution: 'Tiles &copy; Esri',
+    attribution: 'Imagery &copy; Google',
     maxZoom: 21,
-    maxNativeZoom: 18,
+    maxNativeZoom: 21,
     minZoom: 2,
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     updateWhenZooming: false,
     updateWhenIdle: true,
     keepBuffer: 2
