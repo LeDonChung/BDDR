@@ -1750,7 +1750,12 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
   }
 
   if (userMarker) {
-    userMarker.setLatLng(latlng);
+    // During navigation with follow on, the smooth rAF follow loop owns the
+    // blue dot (so it stays centered with the camera). Otherwise place it here
+    // instantly at the real GPS fix.
+    const followOwnsMarker = (typeof navFollowActive !== 'undefined' && navFollowActive)
+      && (typeof followUser !== 'undefined' && followUser);
+    if (!followOwnsMarker) userMarker.setLatLng(latlng);
   } else {
     const icon = L.divIcon({
       className: '',
@@ -1792,7 +1797,10 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
   if (startInput) startInput.value = formatLatLng({ lat: latlng[0], lng: latlng[1] });
 
   if (pan && navigationMode) {
-    map.panTo(latlng, { animate: true, duration: 0.35 });
+    // During navigation the camera is driven by the smooth requestAnimationFrame
+    // follow loop (startNavFollowLoop in routing.js). Animating panTo on every GPS
+    // fix queues animations and makes the map lag behind the user; the rAF loop
+    // glides to the latest position with effectively zero delay instead.
   } else if (pan) {
     map.flyTo(latlng, Math.max(map.getZoom(), 15), { animate: true, duration: 0.6 });
   }
