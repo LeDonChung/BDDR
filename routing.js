@@ -497,10 +497,15 @@ async function startNavigation() {
   updateNavStatus('Đang bắt tín hiệu GPS...');
   updateDriveHeadingStatus();
 
+  // Begin smooth camera follow from the current view (glides to the first GPS fix),
+  // so the map tracks the user with no per-fix animation lag.
+  navFollowTarget = startPoint ? [startPoint[0], startPoint[1]] : null;
+  startNavFollowLoop();
+
   navigationWatchId = navigator.geolocation.watchPosition(
     onNavigationPosition,
     onNavigationError,
-    { enableHighAccuracy: true, timeout: 12000, maximumAge: 1000 }
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
   );
 }
 
@@ -513,6 +518,7 @@ function stopNavigation(arrived) {
   followUser = true;
   followHeading = false;
   stopNavBearingLoop();
+  stopNavFollowLoop();
   offRouteSince = null;
   lastAccuracy = null;
   stopDeviceHeading();
@@ -553,6 +559,10 @@ function onNavigationPosition(pos) {
   setNavBearingTarget(computedHeading);
 
   startPoint = latlng;
+  // Feed the latest GPS fix to the smooth camera-follow loop so the map glides
+  // to the new position with no per-fix animation lag.
+  navFollowTarget = [latlng[0], latlng[1]];
+  if (followUser) startNavFollowLoop();
   if (typeof setUserPosition === 'function') {
     setUserPosition(latlng, accuracy, followUser, computedHeading, true);
   }
@@ -651,7 +661,11 @@ function recenterNavigation() {
     followHeading = true;
     if (Number.isFinite(navBearingTarget)) startNavBearingLoop();
   }
-  if (startPoint && typeof map !== 'undefined' && map) {
+  if (isNavigating && startPoint && typeof map !== 'undefined' && map) {
+    // Glide back to the user via the smooth follow loop (consistent with nav follow).
+    navFollowTarget = [startPoint[0], startPoint[1]];
+    startNavFollowLoop();
+  } else if (startPoint && typeof map !== 'undefined' && map) {
     map.flyTo(startPoint, Math.max(map.getZoom(), 17), { animate: true, duration: 0.45 });
   }
   updateFollowControls();
@@ -865,6 +879,99 @@ function navBearingFrame() {
   }
 
   navBearingRafId = requestAnimationFrame(navBearingFrame);
+}
+
+// ===== SMOOTH CAMERA FOLLOW (Google-Maps-like, no lag) =====
+// Instead of re-triggering an animated panTo on every GPS fix (which queues
+// animations and makes the map perpetually lag behind the user), we interpolate
+// the map center toward the latest GPS position on every animation frame. The
+// blue dot stays centered with a smooth glide and effectively zero delay.
+let navFollowTarget = null;        // latest GPS position [lat, lng]
+let navFollowCurrent = null;       // interpolated displayed position (dot + camera)
+let navFollowLastCommitted = null; // last center actually panned to (px throttle)
+let navFollowRafId = null;
+let navFollowActive = false;       // true while the loop owns the blue-dot position
+
+function startNavFollowLoop() {
+  if (navFollowRafId !== null) return;
+  if (!map) return;
+  // Start the displayed position from the blue dot (or the latest GPS fix) so
+  // the dot never jumps backward; the camera then snaps/glides to it from
+  // wherever it currently is. Dot + camera stay glued together -> the dot stays
+  // centered, no wobble, instant "go where I go" tracking.
+  let start;
+  if (typeof userMarker !== 'undefined' && userMarker) {
+    const ll = userMarker.getLatLng();
+    start = [ll.lat, ll.lng];
+  } else if (navFollowTarget) {
+    start = [navFollowTarget[0], navFollowTarget[1]];
+  } else {
+    const c = map.getCenter();
+    start = [c.lat, c.lng];
+  }
+  navFollowCurrent = start;
+  const cam = map.getCenter();
+  navFollowLastCommitted = [cam.lat, cam.lng];
+  navFollowActive = true;
+  navFollowRafId = requestAnimationFrame(navFollowFrame);
+}
+
+function stopNavFollowLoop() {
+  if (navFollowRafId !== null) {
+    cancelAnimationFrame(navFollowRafId);
+    navFollowRafId = null;
+  }
+  navFollowActive = false;
+  navFollowCurrent = null;
+  navFollowLastCommitted = null;
+}
+
+function navFollowFrame() {
+  navFollowRafId = null;
+  if (!isNavigating || !followUser || !map || !navFollowTarget || !navFollowCurrent) {
+    return;
+  }
+
+  // Lerp the displayed position toward the latest GPS target. Linear lat/lng
+  // interpolation is fine for the short navigation distances involved.
+  const k = 0.85; // converges in ~2 frames (~33ms) -> effectively instant, no delay.
+  let nextLat = navFollowCurrent[0] + (navFollowTarget[0] - navFollowCurrent[0]) * k;
+  let nextLng = navFollowCurrent[1] + (navFollowTarget[1] - navFollowCurrent[1]) * k;
+
+  // Cap the per-frame screen movement so a large recenter glides smoothly
+  // instead of jumping, while normal GPS following (small steps) stays instant.
+  const curPt = map.latLngToContainerPoint(L.latLng(navFollowCurrent[0], navFollowCurrent[1]));
+  const nextPt = map.latLngToContainerPoint(L.latLng(nextLat, nextLng));
+  const stepPx = curPt.distanceTo(nextPt);
+  const MAX_STEP_PX = 220; // only clamps absurd GPS spikes; normal driving never hits it.
+  if (stepPx > MAX_STEP_PX) {
+    const ratio = MAX_STEP_PX / stepPx;
+    nextLat = navFollowCurrent[0] + (nextLat - navFollowCurrent[0]) * ratio;
+    nextLng = navFollowCurrent[1] + (nextLng - navFollowCurrent[1]) * ratio;
+  }
+  navFollowCurrent = [nextLat, nextLng];
+
+  // Move the blue dot to the interpolated position every frame (cheap) so it
+  // glides smoothly and stays centered with the camera -> "go where I go".
+  if (typeof userMarker !== 'undefined' && userMarker) {
+    userMarker.setLatLng(navFollowCurrent);
+  }
+
+  // Only commit an (instant, non-animated) pan when the camera has actually
+  // moved on screen -> keeps tile work bounded, like the bearing loop.
+  const nextScreen = map.latLngToContainerPoint(L.latLng(nextLat, nextLng));
+  const committedScreen = map.latLngToContainerPoint(L.latLng(navFollowLastCommitted[0], navFollowLastCommitted[1]));
+  if (nextScreen.distanceTo(committedScreen) >= 0.8) {
+    map.panTo(navFollowCurrent, { animate: false });
+    navFollowLastCommitted = [navFollowCurrent[0], navFollowCurrent[1]];
+  }
+
+  // Keep gliding until we reach the target position.
+  const targetScreen = map.latLngToContainerPoint(L.latLng(navFollowTarget[0], navFollowTarget[1]));
+  const currentScreen = map.latLngToContainerPoint(L.latLng(navFollowCurrent[0], navFollowCurrent[1]));
+  if (targetScreen.distanceTo(currentScreen) > 0.5) {
+    navFollowRafId = requestAnimationFrame(navFollowFrame);
+  }
 }
 
 function normalizeRoute(route, coords, finalAccessDistance) {
