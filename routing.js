@@ -29,6 +29,12 @@ let navBearingRafId = null;
 let programmaticBearing = false;
 let driveHeadingStatusTimer = null;
 
+// Glide mượt vạch "đã đi / còn lại" tương tự camera follow: lưu alongTarget từ
+// GPS fix, nội suy alongDisplayed -> alongTarget trên requestAnimationFrame.
+let routeAlongTarget = null;       // khoảng cách dọc tuyến từ GPS (mét)
+let routeAlongDisplayed = null;    // khoảng cách đang vẽ trên polyline
+let routeAlongRafId = null;
+
 const OFF_ROUTE_METERS = 60;
 const REROUTE_COOLDOWN_MS = 20000;
 const ARRIVAL_METERS = 25;
@@ -292,8 +298,14 @@ function displayRoute(route, options) {
   options = options || {};
   clearRouteLayers();
 
-  const routeShape = buildRouteCoordsToExactDestination(route.geometry.coordinates.map(c => [c[1], c[0]]));
-  const coords = routeShape.coords;
+  const rawCoords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+  const routeShape = buildRouteCoordsToExactDestination(rawCoords);
+  // Bo cong đường theo Catmull-Rom để các khúc nối mượt như Google Maps,
+  // đồng thời giữ nguyên thứ tự tọa độ để projection vẫn khớp tuyến gốc.
+  const smoothCoords = buildSmoothRouteCoords(routeShape.coords, 3);
+  const coords = smoothCoords.coords;
+  const cumulative = smoothCoords.cumulative;
+  const distanceScale = smoothCoords.distanceScale;
   routeLayer = L.polyline(coords, {
     color: '#93a4bd',
     weight: 5,
@@ -325,7 +337,15 @@ function displayRoute(route, options) {
     fitRouteBounds(routeLayer.getBounds());
   }
 
-  activeRoute = normalizeRoute(route, coords, routeShape.finalAccessDistance);
+  activeRoute = normalizeRoute(route, coords, routeShape.finalAccessDistance, cumulative, distanceScale);
+
+  // Reset glide state cho vạch tiến độ - tránh dùng target của tuyến cũ.
+  routeAlongTarget = null;
+  routeAlongDisplayed = null;
+  if (routeAlongRafId !== null) {
+    cancelAnimationFrame(routeAlongRafId);
+    routeAlongRafId = null;
+  }
 
   const distance = (activeRoute.totalDistance / 1000).toFixed(2);
   const duration = Math.round(activeRoute.totalDuration / 60);
@@ -362,6 +382,69 @@ function buildRouteCoordsToExactDestination(coords) {
 
   out.push([endPoint[0], endPoint[1]]);
   return { coords: out, finalAccessDistance: distance };
+}
+
+// Bo cong tuyến đường bằng Chaikin smoothing - thuật toán "cắt góc" cổ điển
+// mà Google Maps / nhiều routing UI dùng. Khác với Catmull-Rom (chỉ nội suy
+// giữa các điểm), Chaikin thay thế từng đoạn thẳng (Pi, Pi+1) bằng 2 điểm:
+//   Q = 0.75*Pi + 0.25*Pi+1
+//   R = 0.25*Pi + 0.75*Pi+1
+// Sau vài vòng lặp, các góc nhọn OSRM được "vuốt tròn" thành cung mượt
+// mà KHÔNG đi qua điểm gốc (nên không còn góc nhọn). Đổi lại, đường sẽ co
+// lại 1 chút so với đa giác thẳng -> tính distanceScale để ETA vẫn đúng.
+//
+// Trả về:
+//   coords:     mảng latlng đã vuốt cong (giữ điểm đầu/cuối OSRM nguyên vẹn)
+//   cumulative: khoảng cách cộng dồn dọc theo coords (projection dùng luôn)
+//   distanceScale: hệ số co giãn để step.distance OSRM khớp với cung mượt
+function buildSmoothRouteCoords(rawCoords, iterations) {
+  iterations = Math.max(0, Math.min(8, iterations || 3));
+  const src = Array.isArray(rawCoords) ? rawCoords : [];
+  if (src.length < 3 || iterations === 0) {
+    return {
+      coords: src.slice(),
+      cumulative: buildCumulativeDistances(src),
+      distanceScale: 1
+    };
+  }
+
+  // Vòng 1: chạy Chaikin với việc "neo" 2 đầu mút (giữ nguyên P0, Pn).
+  // Cách làm: thay vì để Chaikin dịch chuyển 2 đầu, ta chèn thêm 1 điểm
+  // "ma" đối xứng với P1 qua P0 và 1 điểm đối xứng với Pn-1 qua Pn để
+  // vòng đầu tiên Q tại P0 = P0 và R tại Pn = Pn.
+  const padded = [src[0], src[0]].concat(src).concat([src[src.length - 1], src[src.length - 1]]);
+
+  let current = padded;
+  for (let iter = 0; iter < iterations; iter++) {
+    const next = [];
+    for (let i = 0; i < current.length - 1; i++) {
+      const p = current[i];
+      const q = current[i + 1];
+      next.push([
+        0.75 * p[0] + 0.25 * q[0],
+        0.75 * p[1] + 0.25 * q[1]
+      ]);
+      next.push([
+        0.25 * p[0] + 0.75 * q[0],
+        0.25 * p[1] + 0.75 * q[1]
+      ]);
+    }
+    current = next;
+  }
+
+  // current giờ có 2*N điểm (không bao gồm 2 điểm padding). Đảm bảo
+  // điểm đầu/cuối trùng OSRM (do padding đối xứng ở trên).
+  const out = current;
+
+  const cumulative = buildCumulativeDistances(out);
+  const splineLen = cumulative[cumulative.length - 1] || 0;
+  const rawLen = buildCumulativeDistances(src);
+  const rawTotal = rawLen[rawLen.length - 1] || 0;
+  // Hệ số dùng để step.distance OSRM (tính theo đa giác thẳng) khớp với cung mượt.
+  // Chaikin thường co đường ~3-5% so với thẳng -> scale > 1 để quy đổi ngược.
+  const distanceScale = splineLen > 0 ? rawTotal / splineLen : 1;
+
+  return { coords: out, cumulative, distanceScale };
 }
 
 function showFallbackRoute() {
@@ -405,6 +488,13 @@ function showFallbackRoute() {
   routeDetails().hidden = false;
   if (navigationCard()) navigationCard().hidden = false;
   activeRoute = buildFallbackRoute();
+  // Reset glide state cho vạch tiến độ.
+  routeAlongTarget = null;
+  routeAlongDisplayed = null;
+  if (routeAlongRafId !== null) {
+    cancelAnimationFrame(routeAlongRafId);
+    routeAlongRafId = null;
+  }
   updateNavigationPreview();
   updateNavigationButtons();
 }
@@ -454,6 +544,7 @@ function clearRouteLayers() {
 function clearRoute() {
   stopNavigation(false);
   clearRouteLayers();
+  stopRouteAlongLoop();
   endPoint = null;
   currentDestinationLabel = '';
   activeRoute = null;
@@ -519,6 +610,7 @@ function stopNavigation(arrived) {
   followHeading = false;
   stopNavBearingLoop();
   stopNavFollowLoop();
+  stopRouteAlongLoop();
   offRouteSince = null;
   lastAccuracy = null;
   // KHÔNG tắt la bàn nữa - mũi tên vị trí phải luôn xoay theo hướng thiết bị
@@ -956,16 +1048,19 @@ function navFollowFrame() {
 
   // Lerp the displayed position toward the latest GPS target. Linear lat/lng
   // interpolation is fine for the short navigation distances involved.
-  const k = 0.85; // converges in ~2 frames (~33ms) -> effectively instant, no delay.
+  // Hệ số 0.22: hội tụ trong ~10-12 frame (~200ms) -> mắt thấy được đường
+  // bay mượt từ vị trí cũ sang vị trí mới giữa 2 GPS fix, giống Google Maps.
+  // MAX_STEP_PX ở dưới vẫn chặn các spike GPS bất thường.
+  const k = 0.22;
   let nextLat = navFollowCurrent[0] + (navFollowTarget[0] - navFollowCurrent[0]) * k;
   let nextLng = navFollowCurrent[1] + (navFollowTarget[1] - navFollowCurrent[1]) * k;
 
   // Cap the per-frame screen movement so a large recenter glides smoothly
-  // instead of jumping, while normal GPS following (small steps) stays instant.
+  // instead of jumping (vẫn hoạt động đúng với k=0.22 ở trên).
   const curPt = map.latLngToContainerPoint(L.latLng(navFollowCurrent[0], navFollowCurrent[1]));
   const nextPt = map.latLngToContainerPoint(L.latLng(nextLat, nextLng));
   const stepPx = curPt.distanceTo(nextPt);
-  const MAX_STEP_PX = 220; // only clamps absurd GPS spikes; normal driving never hits it.
+  const MAX_STEP_PX = 220; // chỉ chặn GPS spike bất thường; recenter bình thường glide nhờ k=0.22.
   if (stepPx > MAX_STEP_PX) {
     const ratio = MAX_STEP_PX / stepPx;
     nextLat = navFollowCurrent[0] + (nextLat - navFollowCurrent[0]) * ratio;
@@ -996,9 +1091,16 @@ function navFollowFrame() {
   }
 }
 
-function normalizeRoute(route, coords, finalAccessDistance) {
+function normalizeRoute(route, coords, finalAccessDistance, precomputedCumulative, distanceScale) {
   finalAccessDistance = finalAccessDistance || 0;
-  const cumulative = buildCumulativeDistances(coords);
+  // Nếu người gọi đã cung cấp cumulative (sau khi bo cong bằng spline) thì dùng luôn,
+  // đảm bảo projection khớp tuyến hiển thị. Ngược lại build từ coords thẳng như cũ.
+  const cumulative = precomputedCumulative || buildCumulativeDistances(coords);
+  // alongRouteLen = tổng chiều dài dọc theo coords thực đang hiển thị (spline).
+  // ETA/duration dùng tổng OSRM gốc (route.distance) để không bị lệch vì
+  // spline có thể ngắn/dài hơn đa giác thẳng một chút.
+  const alongRouteLen = cumulative[cumulative.length - 1] || 0;
+  const rawTotal = Number(route.distance) || 0;
   const steps = [];
   let accumulated = 0;
 
@@ -1016,8 +1118,9 @@ function normalizeRoute(route, coords, finalAccessDistance) {
   });
 
   if (finalAccessDistance > EXACT_DESTINATION_CONNECT_METERS) {
-    const totalFromCoords = cumulative[cumulative.length - 1] || accumulated + finalAccessDistance;
-    const finalStartDistance = Math.max(0, totalFromCoords - finalAccessDistance);
+    // finalAccessDistance được tính bằng đường thẳng tới endPoint (đã có sẵn).
+    // Ta dùng rawTotal (OSRM gốc) làm mốc tổng để step "đi thẳng vào lô" nằm cuối tuyến.
+    const finalStartDistance = Math.max(0, rawTotal - finalAccessDistance);
     const lastStep = steps[steps.length - 1];
     if (lastStep && lastStep.endDistance > finalStartDistance) {
       lastStep.endDistance = finalStartDistance;
@@ -1028,16 +1131,20 @@ function normalizeRoute(route, coords, finalAccessDistance) {
       instruction: 'Đi thẳng vào lô đã chọn',
       distance: finalAccessDistance,
       startDistance: finalStartDistance,
-      endDistance: totalFromCoords
+      endDistance: rawTotal
     });
   }
 
   return {
     coords,
     cumulative,
-    totalDistance: cumulative[cumulative.length - 1] || route.distance || 0,
+    // Tổng để projection & vạch tiến độ: dùng chiều dài spline để vạch
+    // "đã đi" chạm đúng điểm cuối hiển thị. ETA thì dùng routeDistanceRaw.
+    totalDistance: alongRouteLen || rawTotal,
+    routeDistanceRaw: rawTotal,
     totalDuration: (route.duration || 0) + (finalAccessDistance / FINAL_ACCESS_SPEED_MPS),
-    steps
+    steps,
+    distanceScale: distanceScale || 1
   };
 }
 
@@ -1048,7 +1155,9 @@ function buildFallbackRoute() {
     coords,
     cumulative: buildCumulativeDistances(coords),
     totalDistance: distance,
+    routeDistanceRaw: distance,
     totalDuration: 0,
+    distanceScale: 1,
     steps: [{
       instruction: 'Đi tới điểm đích theo tuyến tham khảo',
       distance,
@@ -1113,9 +1222,56 @@ function getCurrentStep(along) {
 function updateRouteProgress(along) {
   if (!activeRoute || !routeRemainingLayer || !routeTraveledLayer) return;
 
-  const split = splitRouteAtDistance(activeRoute, along);
-  routeTraveledLayer.setLatLngs(split.traveled);
-  routeRemainingLayer.setLatLngs(split.remaining);
+  // Lưu target, không gọi setLatLngs ngay - glide sẽ chạy trên rAF.
+  routeAlongTarget = Math.max(0, Math.min(activeRoute.totalDistance, along));
+  startRouteAlongLoop();
+
+  // Vẫn vẽ ngay 1 frame để tránh cảm giác "đứng hình" khi lần đầu có GPS,
+  // nhưng các lần sau sẽ mượt theo rAF.
+  if (routeAlongDisplayed === null) {
+    routeAlongDisplayed = routeAlongTarget;
+    commitRouteAlong();
+  }
+}
+
+function startRouteAlongLoop() {
+  if (routeAlongRafId !== null) return;
+  routeAlongRafId = requestAnimationFrame(routeAlongFrame);
+}
+
+function stopRouteAlongLoop() {
+  if (routeAlongRafId !== null) {
+    cancelAnimationFrame(routeAlongRafId);
+    routeAlongRafId = null;
+  }
+  routeAlongTarget = null;
+  routeAlongDisplayed = null;
+}
+
+function routeAlongFrame() {
+  routeAlongRafId = null;
+  if (routeAlongTarget === null || routeAlongDisplayed === null || !activeRoute) return;
+
+  // Nội suy tuyến tính mỗi frame, hệ số 0.18 ~ hội tụ trong ~5-6 frame (~100ms)
+  // - đủ mượt cho thị giác mà không bị trễ cảm giác so với marker.
+  const next = routeAlongDisplayed + (routeAlongTarget - routeAlongDisplayed) * 0.18;
+  if (Math.abs(next - routeAlongDisplayed) < 0.05) {
+    routeAlongDisplayed = routeAlongTarget;
+  } else {
+    routeAlongDisplayed = next;
+  }
+  commitRouteAlong();
+
+  if (routeAlongDisplayed !== routeAlongTarget) {
+    routeAlongRafId = requestAnimationFrame(routeAlongFrame);
+  }
+}
+
+function commitRouteAlong() {
+  if (!activeRoute) return;
+  const split = splitRouteAtDistance(activeRoute, routeAlongDisplayed);
+  if (routeTraveledLayer) routeTraveledLayer.setLatLngs(split.traveled);
+  if (routeRemainingLayer) routeRemainingLayer.setLatLngs(split.remaining);
 }
 
 function splitRouteAtDistance(route, along) {
@@ -1305,7 +1461,12 @@ function formatDistance(meters) {
 
 function estimateDurationMinutes(distanceMeters) {
   if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return 0;
-  if (activeRoute && activeRoute.totalDistance > 0 && activeRoute.totalDuration > 0) {
+  // Ưu tiên dùng tổng khoảng cách OSRM gốc để ETA khớp với dữ liệu định tuyến
+  // (routeDistanceRaw). Fallback về totalDistance nếu không có.
+  const total = (activeRoute && activeRoute.routeDistanceRaw) || (activeRoute && activeRoute.totalDistance) || 0;
+  if (activeRoute && activeRoute.totalDistance > 0 && activeRoute.totalDuration > 0 && total > 0) {
+    // distanceMeters đến từ projection đã ở hệ spline (tổng = activeRoute.totalDistance).
+    // Quy đổi sang hệ OSRM thô để tính tỉ lệ ETA đúng.
     const ratio = Math.max(0, Math.min(1, distanceMeters / activeRoute.totalDistance));
     return Math.max(1, Math.round(activeRoute.totalDuration * ratio / 60));
   }
