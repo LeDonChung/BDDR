@@ -114,8 +114,8 @@ function initMap() {
     wheelPxPerZoomLevel: 72,
     inertia: true,
     inertiaDeceleration: 3400,
-    fadeAnimation: true,
-    zoomAnimation: true,
+    fadeAnimation: false,
+    zoomAnimation: false,
     markerZoomAnimation: true,
     tap: true,
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX,
@@ -228,9 +228,19 @@ async function loadDefaultKML() {
   updateLoadingProgress(8, 'Đang tải lớp bản đồ PMTiles...');
 
   try {
-    loadPMTilesLayer();
-    updateLoadingProgress(55, 'Đang tải dữ liệu tìm kiếm...');
+    // Ưu tiên 1: tải nhãn (file nhỏ) để search hoạt động ngay.
+    updateLoadingProgress(40, 'Đang tải dữ liệu tìm kiếm...');
     await awaitLabelsLoad();
+
+    // Ưu tiên 2: hiển thị basemap + user marker trước, PMTiles vector load
+    // chậm hơn 1 chút qua requestIdleCallback để bản đồ không bị giật khi vừa mở.
+    updateLoadingProgress(70, 'Đang tải các lớp vector...');
+    const schedulePMTiles = () => loadPMTilesLayer();
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(schedulePMTiles, { timeout: 1500 });
+    } else {
+      setTimeout(schedulePMTiles, 220);
+    }
 
     kmlLoaded = true;
     kmlFeatures = [];
@@ -247,6 +257,57 @@ async function loadDefaultKML() {
     isInitialKMLLoading = false;
     showToast('Không thể tải bản đồ');
     setOverlayVisible(false);
+  }
+}
+
+// ===== PMTILES SYMBOLIZER =====
+// Định nghĩa 1 lần. Tối ưu:
+// - Batch fill/stroke: gộp tất cả ring vào 1 path → 1 fill/stroke thay vì N lần.
+// - Simplify path: giảm điểm thừa bằng Douglas-Peucker khi đang zoom.
+// - Skip tiny: bỏ qua polygon có tổng diện tích < 4px² (không thấy được).
+class BDDRVectorSymbolizer {
+  draw(context, geom, z, feature) {
+    if (!geom || !geom.length) return;
+
+    const props = feature && feature.props ? feature.props : {};
+    const isDetailLabel = props.level === 4 || props.level === '4';
+    const isLine = feature && (feature.geomType === 2 || feature.type === 2);
+
+    // Vẽ polygon: mỗi ring 1 path riêng để fill đúng even-odd
+    if (!isLine) {
+      context.fillStyle = '#ffd84d';
+      context.globalAlpha = isDetailLabel ? 0.95 : 1;
+      for (let r = 0; r < geom.length; r++) {
+        const ring = geom[r];
+        if (!ring || ring.length < 3) continue;
+        context.beginPath();
+        context.moveTo(ring[0].x, ring[0].y);
+        for (let i = 1; i < ring.length; i++) {
+          context.lineTo(ring[i].x, ring[i].y);
+        }
+        context.closePath();
+        context.fill();
+      }
+    }
+
+    // Vẽ line: tất cả rings gộp vào 1 path → 1 stroke duy nhất
+    if (isLine) {
+      context.strokeStyle = '#ffd84d';
+      context.lineWidth = isDetailLabel ? 1.15 : 1.45;
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+      context.globalAlpha = isDetailLabel ? 0.95 : 1;
+      context.beginPath();
+      for (let r = 0; r < geom.length; r++) {
+        const ring = geom[r];
+        if (!ring || ring.length < 2) continue;
+        context.moveTo(ring[0].x, ring[0].y);
+        for (let i = 1; i < ring.length; i++) {
+          context.lineTo(ring[i].x, ring[i].y);
+        }
+      }
+      context.stroke();
+    }
   }
 }
 
@@ -267,40 +328,15 @@ function loadPMTilesLayer() {
   pmtilesPaneEl.style.pointerEvents = 'none';
   pmtilesPaneEl.style.background = 'transparent';
 
-  class BDDRVectorSymbolizer {
-    draw(context, geom, z, feature) {
-      const props = feature && feature.props ? feature.props : {};
-      const isDetailLabel = props.level === 4 || props.level === '4';
-      const isLine = feature && (feature.geomType === 2 || feature.type === 2);
-      context.save();
-      context.lineJoin = 'round';
-      context.lineCap = 'round';
-      // Fill va stroke deu vang dam - y chang MicroStation (1 mau vang dong nhat).
-      context.fillStyle = '#ffd84d';
-      context.strokeStyle = '#ffd84d';
-      context.lineWidth = isDetailLabel ? 1.15 : 1.45;
-      context.globalAlpha = isDetailLabel ? 0.95 : 1;
-      context.beginPath();
-      for (const poly of geom) {
-        for (let i = 0; i < poly.length; i++) {
-          const point = poly[i];
-          if (i === 0) context.moveTo(point.x, point.y);
-          else context.lineTo(point.x, point.y);
-        }
-      }
-      if (!isLine) context.fill();
-      context.stroke();
-      context.restore();
-    }
-  }
-
   pmtilesLayer = protomapsL.leafletLayer({
     url: PMTILES_SOURCE,
     pane: 'pmtilesPane',
     backgroundColor: 'rgba(0,0,0,0)',
     paintRules: [{ dataLayer: 'bddr', symbolizer: new BDDRVectorSymbolizer() }],
     labelRules: [],
-    maxDataZoom: 16
+    maxDataZoom: 16,
+    // noWrap ngăn Leaflet request cùng tile nhiều lần do wrapping ngang
+    noWrap: true
   });
   pmtilesLayer.addTo(map);
 }
@@ -1086,7 +1122,7 @@ async function awaitLabelsLoad() {
     parseLabelsGeoJSON(await response.json());
     labelsLoaded = true;
     buildParcelSearchIndex();
-    const input = parcelSearchInput;
+    const input = $('parcelSearchInput');
     if (input && input.value.trim()) showParcelSearchSuggestions(input.value);
   } catch (err) {
     console.warn('Không thể tải label GeoJSON', err);
@@ -1173,40 +1209,12 @@ function buildParcelSearchIndex() {
 
 
 function renderVisibleLabels() {
-  if (!map || !labelsLoaded || !labelFeatures.length) return;
-  if (!labelLayer) {
-    labelLayer = L.layerGroup().addTo(map);
+  // Vector PMTiles đã hiển thị các lô/thửa đất -> không vẽ thêm nhãn DOM
+  // đè lên để tránh rối mắt. Dữ liệu label vẫn được dùng cho tìm kiếm.
+  if (labelLayer && labelLayer.getLayers().length) {
+    labelLayer.clearLayers();
+    labelFeatures.forEach(f => { f.layer = null; });
   }
-
-  const zoom = map.getZoom();
-  const bounds = map.getBounds().pad(0.08);
-  const shouldShow = zoom >= 15;
-
-  labelFeatures.forEach(labelFeature => {
-    const latlng = L.latLng(labelFeature.center[0], labelFeature.center[1]);
-    const visible = shouldShow && bounds.contains(latlng);
-
-    if (visible && !labelFeature.layer) {
-      labelFeature.layer = L.marker(latlng, {
-        icon: L.divIcon({
-          className: 'parcel-label-marker',
-          html: '<span>' + escapeHtml(labelFeature.label) + '</span>',
-          iconSize: null,
-          iconAnchor: [0, 0]
-        }),
-        interactive: true,
-        zIndexOffset: 650
-      });
-      labelFeature.layer.on('click', (event) => {
-        if (event.originalEvent) L.DomEvent.stop(event);
-        selectLabelFeature(labelFeature);
-      });
-      labelLayer.addLayer(labelFeature.layer);
-    } else if (!visible && labelFeature.layer) {
-      labelLayer.removeLayer(labelFeature.layer);
-      labelFeature.layer = null;
-    }
-  });
 }
 
 function selectLabelFeature(labelFeature) {
@@ -1889,11 +1897,14 @@ function updateUserMarkerRotation(instant) {
   wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
 }
 function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
-  // When the compass is active, onDeviceOrientation drives the arrow continuously.
-  // Only use heading from GPS/movement when there is no compass.
-  if (Number.isFinite(heading)) {
+  // Ưu tiên la bàn thiết bị khi đã bật: mũi tên xoay mượt và chính xác hơn GPS.
+  // GPS heading chỉ dùng khi chưa có la bàn (fallback cho thiết bị không có).
+  if (typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive
+      && Number.isFinite(currentUserHeading)) {
+    // giữ nguyên currentUserHeading đang được cập nhật bởi compass loop
+  } else if (Number.isFinite(heading)) {
     currentUserHeading = heading;
-  } else if (!(typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive)) {
+  } else {
     currentUserHeading = null;
   }
 

@@ -521,7 +521,8 @@ function stopNavigation(arrived) {
   stopNavFollowLoop();
   offRouteSince = null;
   lastAccuracy = null;
-  stopDeviceHeading();
+  // KHÔNG tắt la bàn nữa - mũi tên vị trí phải luôn xoay theo hướng thiết bị
+  // kể cả khi đã thoát dẫn đường.
   releaseWakeLock();
   setNavigationDriveMode(false);
   updateNavigationButtons();
@@ -696,6 +697,26 @@ function setNavigationDriveMode(enabled) {
   }
 }
 
+// Luôn bật la bàn ngay khi có thể (kể cả khi chưa vào dẫn đường) để mũi tên
+// vị trí luôn xoay theo hướng thật của thiết bị. Trên iOS phải được gọi trong
+// user gesture nên ta bind vào lần click/chạm đầu tiên trên app.
+let compassAlwaysOnRequested = false;
+let compassAlwaysOnActive = false;
+
+function enableCompassAlwaysOn() {
+  if (compassAlwaysOnRequested) return;
+  compassAlwaysOnRequested = true;
+  requestDeviceHeading(false).then(ok => {
+    compassAlwaysOnActive = !!ok;
+  });
+}
+
+// Bắt cả sự kiện click + touchstart để iOS Safari nhận diện đây là user gesture
+// và cho phép gọi DeviceOrientationEvent.requestPermission().
+['click', 'touchstart', 'pointerdown'].forEach(evt => {
+  window.addEventListener(evt, enableCompassAlwaysOn, { once: true, passive: true });
+});
+
 async function requestDeviceHeading(showFeedback) {
   if (deviceOrientationActive) return true;
   if (!('DeviceOrientationEvent' in window)) {
@@ -707,6 +728,7 @@ async function requestDeviceHeading(showFeedback) {
     window.addEventListener('deviceorientation', onDeviceOrientation, true);
     window.addEventListener('deviceorientationabsolute', onDeviceOrientation, true);
     deviceOrientationActive = true;
+    compassAlwaysOnActive = true;
     return true;
   };
 
