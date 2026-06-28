@@ -67,15 +67,16 @@ const $ = (id) => document.getElementById(id);
 
 // ===== TILE LAYERS =====
 const osmLayer = L.tileLayer(
-  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
   {
-    attribution: '&copy; OpenStreetMap contributors',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     maxZoom: 21,
     maxNativeZoom: 19,
     minZoom: 2,
     updateWhenZooming: false,
     updateWhenIdle: true,
-    keepBuffer: 3
+    keepBuffer: 3,
+    subdomains: 'abcd'
   }
 );
 
@@ -157,13 +158,14 @@ function initMap() {
   map.on('click', onMapBackgroundClick);
   map.on('rotate', onMapRotate);
 
-  $('locateBtn').addEventListener('click', locateUser);
+  $('locateBtn').addEventListener('click', () => locateUser());
   $('routeBtn').addEventListener('click', promptRoutePick);
 
   initRouting();
   initRouteConfirmModal();
   initParcelSearch();
   setOverlayVisible(false);
+  startGeoWatch();
 }
 
 function setOverlayVisible(visible) {
@@ -273,10 +275,11 @@ function loadPMTilesLayer() {
       context.save();
       context.lineJoin = 'round';
       context.lineCap = 'round';
+      // Fill va stroke deu vang dam - y chang MicroStation (1 mau vang dong nhat).
+      context.fillStyle = '#ffd84d';
       context.strokeStyle = '#ffd84d';
       context.lineWidth = isDetailLabel ? 1.15 : 1.45;
-      context.globalAlpha = isDetailLabel ? 0.82 : 0.95;
-      context.fillStyle = 'rgba(255, 216, 77, 0.08)';
+      context.globalAlpha = isDetailLabel ? 0.95 : 1;
       context.beginPath();
       for (const poly of geom) {
         for (let i = 0; i < poly.length; i++) {
@@ -985,7 +988,8 @@ function getKMLFeatureStyle() {
   if (kmlStyleMode === 'satellite') {
     return { color: '#ffd84d', fillColor: '#ffd84d', opacity: 0.95, fillOpacity: 0.08, weight: 1.5 };
   }
-  return { color: '#2563eb', fillColor: '#60a5fa', opacity: 0.9, fillOpacity: 0.045, weight: 1.7 };
+  // Street mode (CartoDB Voyager - nen sang) - mau xanh duong dam noi tren nen sang
+  return { color: '#2563eb', fillColor: '#2563eb', opacity: 0.95, fillOpacity: 0.08, weight: 1.8 };
 }
 
 function updateKMLLayerStyles() {
@@ -1100,18 +1104,24 @@ function parseLabelsGeoJSON(geojson) {
     const lat = Number(coordinates[1]);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
-    const properties = feature.properties || {};
-    const label = String(properties.label || '').trim();
+    const props = feature.properties || {};
+    const label = String(props.label || '').trim();
     if (!label) return;
+
+    const rawProps = {};
+    for (const key of Object.keys(props)) {
+      const val = props[key];
+      if (val !== null && val !== undefined) rawProps[key] = String(val).trim();
+    }
 
     labelFeatures.push({
       label,
-      code: String(properties.code || '').trim(),
-      unit: String(properties.unit || '').trim(),
-      number: String(properties.number || '').trim(),
-      center: [lat, lng],
-      properties,
-      layer: null
+      code:    String(props.code    || '').trim(),
+      unit:    String(props.unit    || '').trim(),
+      number:  String(props.number  || '').trim(),
+      center:  [lat, lng],
+      properties: rawProps,
+      layer:   null
     });
   });
 }
@@ -1121,16 +1131,17 @@ function buildParcelSearchIndex() {
     .filter(feature => feature.clickable && feature.type === 'polygon')
     .map((feature, index) => {
       const name = cleanDestinationName(feature.name || ('Lô ' + (index + 1)));
-      const desc = String(feature.desc || '').replace(/<[^>]*>/g, ' ').replace(/s+/g, ' ').trim();
+      const desc = String(feature.desc || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       const fallbackLabel = 'Lô gần ' + formatLatLng({ lat: feature.centerLat, lng: feature.centerLng });
       const label = name === 'Điểm đã chọn' ? (desc || fallbackLabel) : name;
+      const extraFields = Object.values(feature.properties || {}).join(' ');
       return {
         type: 'parcel',
         feature,
         label,
         desc,
         center: [feature.centerLat, feature.centerLng],
-        searchText: normalizeParcelSearchText([name, desc, fallbackLabel].join(' '))
+        searchText: buildParcelSearchText([name, desc, fallbackLabel, extraFields])
       };
     });
 
@@ -1138,18 +1149,21 @@ function buildParcelSearchIndex() {
     const isParcelCode = Boolean(labelFeature.code);
     const displayCode = labelFeature.code || [labelFeature.unit, labelFeature.number].filter(Boolean).join(' ') || labelFeature.label;
     const areaText = isParcelCode && labelFeature.number ? 'Diện tích: ' + labelFeature.number + ' ha' : '';
+    // Gom tat ca gia tri tu properties vao searchText de bat ky truong nao cung tim duoc.
+    const extraFields = Object.values(labelFeature.properties || {}).join(' ');
     return {
       type: 'label',
       feature: null,
       label: displayCode,
       desc: areaText,
       center: labelFeature.center,
-      searchText: normalizeParcelSearchText([
+      searchText: buildParcelSearchText([
         labelFeature.label,
         labelFeature.code,
         labelFeature.unit,
-        labelFeature.number
-      ].join(' '))
+        labelFeature.number,
+        extraFields
+      ])
     };
   });
 
@@ -1215,6 +1229,123 @@ function normalizeParcelSearchText(value) {
     .trim();
 }
 
+// ===== PARCEL SEARCH SCORING =====
+// searchText da duoc buildParcelSearchText() xay dung gom cac phan:
+//   1. baseText    (cac tu nguyen cach nhau boi space)
+//   2. compactText (giu lai dau gach ngan "C1-A")
+//   3. sortedChars (chuoi ky tu don le sorted: "157c1t")
+//   4. ngrams      (cac 2-gram lien tiep)
+// Muc tieu: khi user go "c1" (ky tu lien tiep) se match lien tiep truoc;
+// neu khong co term lien tiep, moi fallback sang kiem tra sortedChars de
+// dam bao go "c1" van ra "156 CT75" (vi "c" va "1" deu co trong sortedChars).
+function scoreParcelSearchItem(item, terms, normalizedQuery) {
+  const st = item.searchText;
+  if (!st) return 0;
+
+  // Tach phan baseText (phan co nghia nhat) - den ky tu '/' dau tien.
+  const slashIdx = st.indexOf('/');
+  const baseText = slashIdx > 0 ? st.substring(0, slashIdx).trim() : st;
+
+  // 1) Match chinh xac toan bo -> diem rat cao
+  if (baseText === normalizedQuery) return 100000;
+  if (baseText.startsWith(normalizedQuery)) return 90000;
+
+  // 2) Moi term phai co mat lien tiep trong baseText
+  const allTermsInBase = terms.every(term => baseText.includes(term));
+  if (!allTermsInBase) {
+    // 3) Fallback: kiem tra moi ky tu cua term co trong toan bo searchText khong
+    // (nho sortedChars, moi ky tu deu co mat o mot vi tri nao do).
+    // Dong thoi kiem tra 2-gram (ngrams phan 4) de tang diem khi match lien tiep.
+    let charScore = 0;
+    const allCharsPresent = terms.every(term => {
+      const chars = term.replace(/[^a-z0-9]/g, '');
+      const allChars = chars.split('').every(c => st.includes(c));
+      if (!allChars) return false;
+      // Thuong gap lien tiep trong ngrams phan 4 - vi du "c1" trong "c1-a" se
+      // xuat hien nhu 2-gram "c1". Kiem tra tung cap ky tu lien tiep co trong st.
+      let bigramHits = 0;
+      for (let i = 0; i < chars.length - 1; i++) {
+        if (st.includes(chars.substr(i, 2))) bigramHits++;
+      }
+      charScore += allChars ? 100 : 0;
+      charScore += bigramHits * 200;
+      return true;
+    });
+    if (!allCharsPresent) return 0;
+    // Diem fallback - uu tien bigram lien tiep
+    return charScore;
+  }
+
+  // 4) Term-level match trong baseText
+  let score = 0;
+  for (const term of terms) {
+    if (baseText.startsWith(term)) {
+      score += 5000;
+    } else {
+      const idx = baseText.indexOf(term);
+      if (idx === 0) score += 4000;
+      else if (baseText[idx - 1] === ' ' || baseText[idx - 1] === '/' || baseText[idx - 1] === ',') {
+        score += 3000;
+      } else {
+        score += 1500;
+      }
+    }
+  }
+
+  // 5) Bonus neu label chinh xac / prefix match term
+  if (item.label) {
+    const rawLabel = normalizeParcelSearchText(item.label);
+    for (const term of terms) {
+      if (rawLabel === term) score += 8000;
+      else if (rawLabel.startsWith(term)) score += 4000;
+    }
+  }
+
+  return score;
+}
+
+// ===== PARCEL SEARCH (LOCAL ONLY) =====
+// buildParcelSearchText() tao ra mot searchText co kha nang match ca khi user
+// go "c1" hay "ct1" ngan gon. Ly do: cac lô co dang "156 CT75" hoac "5,86 C1-A..."
+// can duoc bam moi ky tu don le de khi user go "c1" (c + 1) van match duoc ca
+// "CT75" (c + t + 7 + 5) va "C1-A" (c + 1 + a).
+function buildParcelSearchText(parts) {
+  const joined = parts.filter(Boolean).join(' ');
+
+  // Normalize ky tu dac biet: bo dau, viet thuong, giu chu + so + slash.
+  function norm(s) {
+    return String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd');
+  }
+
+  // 1. Text thuong (bo ky tu dac biet thanh space)
+  const baseText = norm(joined).replace(/[^a-z0-9\/]+/g, ' ').trim();
+
+  // 2. Text giu lai (chi bo dau, khong replace ky tu dac biet thanh space) -
+  // giup "C1-A" thanh "c1-a" (giu dau gach ngang) de match "C1" voi "C1-A".
+  const compactText = norm(joined).replace(/[^a-z0-9\/\-]+/g, ' ').trim();
+
+  // 3. Chui ky tu don le (sorted + unique) - dam bao moi ky tu deu co mat de
+  // ho tro "fuzzy char" search nhu "c1" -> match "ct75 156".
+  const charSet = norm(joined).replace(/[^a-z0-9]/g, '');
+  const sortedChars = Array.from(new Set(charSet.split(''))).sort().join('');
+
+  // 4. Tất cả 2-char sliding window từ chui (chỉ với chuỗi ngắn: 4-12 ky tu)
+  // giúp "c1" match duoc "C1-A" (co substring "c1" qua "-a").
+  let ngrams = '';
+  const compact = norm(joined).replace(/[^a-z0-9]/g, '');
+  if (compact.length >= 2 && compact.length <= 16) {
+    for (let i = 0; i < compact.length - 1; i++) {
+      ngrams += compact.substr(i, 2) + ' ';
+    }
+  }
+
+  return normalizeParcelSearchText([baseText, compactText, sortedChars, ngrams.trim()].join(' '));
+}
+
 function showParcelSearchSuggestions(query) {
   const suggestions = $('parcelSearchSuggestions');
   if (!suggestions) return;
@@ -1241,7 +1372,7 @@ function showParcelSearchSuggestions(query) {
     .map(item => ({ item, score: scoreParcelSearchItem(item, terms, normalized) }))
     .filter(result => result.score > 0)
     .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label, 'vi'))
-    .slice(0, 8)
+    .slice(0, 15)
     .map(result => result.item);
 
   suggestions.hidden = false;
@@ -1260,20 +1391,6 @@ function showParcelSearchSuggestions(query) {
   suggestions.querySelectorAll('[data-search-index]').forEach(button => {
     button.addEventListener('click', () => selectParcelSearchResult(Number(button.dataset.searchIndex)));
   });
-}
-
-function scoreParcelSearchItem(item, terms, normalizedQuery) {
-  if (!item.searchText) return 0;
-  if (item.searchText === normalizedQuery) return 1000;
-  if (item.searchText.startsWith(normalizedQuery)) return 800;
-  if (item.searchText.includes(normalizedQuery)) return 600;
-
-  let score = 0;
-  for (const term of terms) {
-    if (!item.searchText.includes(term)) return 0;
-    score += item.searchText.startsWith(term) ? 120 : 60;
-  }
-  return score;
 }
 
 function onParcelSearchKeyDown(event) {
@@ -1645,19 +1762,50 @@ function escapeHtml(s) {
 }
 
 // ===== GEOLOCATION =====
-function locateUser(pan) {  if (pan === undefined) pan = true;
+// Theo doi vi tri lien tuc theo mac dinh (khong the tat) - cap nhat marker
+// va accuracy circle theo thoi gian thuc khi user di chuyen.
+let geoWatchId = null;
+
+function startGeoWatch() {
+  if (geoWatchId !== null) return;
+  if (!('geolocation' in navigator)) return;
+  geoWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+      const latlng = [latitude, longitude];
+      // Heading tu GPS chi tin cay khi user dang di chuyen (speed > 0.5 m/s).
+      const gpsHeading = (Number.isFinite(heading) && Number.isFinite(speed) && speed > 0.5)
+        ? heading
+        : (Number.isFinite(heading) ? heading : null);
+      setUserPosition(latlng, accuracy, false, gpsHeading, false);
+    },
+    (err) => {
+      console.warn('watchPosition error', err);
+      // Loi permission: chi canh bao, van giu watch de thu lai.
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+}
+
+function locateUser(pan) {
+  if (pan === undefined) pan = true;
   if (!('geolocation' in navigator)) {
     showToast('Trình duyệt không hỗ trợ định vị');
     setUserPosition(DEFAULT_CENTER, null, pan);
     scheduleKMLLoad();
     return;
   }
+  // Mac dinh theo doi lien tuc: dam bao watch dang chay.
+  startGeoWatch();
   showToast('Đang lấy vị trí...');
   navigator.geolocation.getCurrentPosition(
     (pos) => {
-      const { latitude, longitude, accuracy } = pos.coords;
+      const { latitude, longitude, accuracy, heading, speed } = pos.coords;
       const latlng = [latitude, longitude];
-      setUserPosition(latlng, accuracy, pan);
+      const gpsHeading = (Number.isFinite(heading) && Number.isFinite(speed) && speed > 0.5)
+        ? heading
+        : (Number.isFinite(heading) ? heading : null);
+      setUserPosition(latlng, accuracy, pan, gpsHeading, false);
       scheduleKMLLoad();
       if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
         tryAutoRoute();
