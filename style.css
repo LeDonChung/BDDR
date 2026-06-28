@@ -136,6 +136,9 @@ html, body {
   font-size: 13px;
   font-weight: 700;
   color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .search-suggestion span {
   display: block;
