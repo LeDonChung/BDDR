@@ -921,9 +921,9 @@ html, body {
 
 
 /* ====== DXF LABEL POINTS ====== */
-.parcel-label-marker {
-  pointer-events: auto;
-}
+/* Vector PMTiles đã hiển thị các lô/thửa đất nên không vẽ thêm nhãn DOM
+   để tránh đè và gây rối. Lớp vẫn còn để tương thích nếu bật lại. */
+.parcel-label-marker { display: none; }
 .parcel-label-marker span {
   display: inline-block;
   transform: translate(-50%, -50%);
