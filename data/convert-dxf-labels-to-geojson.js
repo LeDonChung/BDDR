@@ -1,6 +1,12 @@
-﻿const fs = require('fs');
-const dxfPath = 'data/BDDR Tong Final.dxf';
-const outPath = 'data/BDDR-labels.geojson';
+const fs = require('fs');
+const path = require('path');
+
+const dxfPath = process.argv[2] || path.join(__dirname, 'BDDR Tong Final.dxf');
+const outPath = process.argv[3] || path.join(__dirname, 'BDDR-labels.geojson');
+
+if (!fs.existsSync(dxfPath)) {
+  throw new Error(`Khong tim thay DXF: ${dxfPath}`);
+}
 
 const DXF_BOUNDS = { minX: 389811.837, maxX: 426749.934, minY: 1518967.41, maxY: 1545466.0654 };
 const GEO_BOUNDS = { minLng: 107.4821130299, maxLng: 107.8242307943, minLat: 13.7335916077, maxLat: 13.9723554948 };
@@ -88,5 +94,6 @@ for (let i = 0; i < pairs.length; i++) {
   });
 }
 
+fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, JSON.stringify({ type: 'FeatureCollection', name: 'BDDR labels', features }));
 console.log(`Da tao ${outPath} (${features.length} labels)`);

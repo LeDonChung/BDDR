@@ -138,8 +138,21 @@ try {
     if (description) properties.description = description;
     if (styleUrl) properties.styleUrl = styleUrl;
     const beforePlacemark = kml.slice(0, match.index);
-    const levelMatch = [...beforePlacemark.matchAll(/<(?:\w+:)?name[^>]*>\s*Level\s+(\d+)\s*<\/(?:\w+:)?name>/gi)].pop();
-    if (levelMatch) properties.level = Number(levelMatch[1]);
+    // Folder gan nhat truoc placemark quyet dinh nhom to mau:
+    //  - "Level N"           -> properties.level  (label chi tiet, cho min-zoom/clickable)
+    //  - "Ranh*" / "TruSo"   -> properties.group  (to mau theo folder MicroStation)
+    const folderMatch = [...beforePlacemark.matchAll(
+      /<(?:\w+:)?name[^>]*>\s*(Level\s+\d+|Ranh[A-Za-z0-9_]+|TruSo)\s*<\/(?:\w+:)?name>/gi
+    )].pop();
+    if (folderMatch) {
+      const tag = folderMatch[1].trim();
+      const lvl = tag.match(/^Level\s+(\d+)$/i);
+      if (lvl) {
+        properties.level = Number(lvl[1]);
+      } else {
+        properties.group = tag;
+      }
+    }
 
     features.push({ type: 'Feature', properties, geometry });
   }

@@ -9,16 +9,23 @@ if (-not (Test-Path -LiteralPath $InputGeoJson)) {
     throw "Khong tim thay GeoJSON: $InputGeoJson. Hay chay npm run convert:kmz truoc."
 }
 
+$InputGeoJson = (Resolve-Path -LiteralPath $InputGeoJson).Path
+$OutputPmTiles = [System.IO.Path]::GetFullPath($OutputPmTiles)
+$dataDir = (Resolve-Path -LiteralPath (Split-Path -Parent $InputGeoJson)).Path
+$outputDir = [System.IO.Path]::GetFullPath((Split-Path -Parent $OutputPmTiles))
+if ($outputDir -ne $dataDir) {
+    throw "OutputPmTiles phai nam cung thu muc voi InputGeoJson. Input dir: $dataDir. Output dir: $outputDir"
+}
+
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $docker) {
     throw 'Khong tim thay Docker. Can cai Docker Desktop de tao PMTiles bang tippecanoe.'
 }
 
-$dataDir = Resolve-Path -LiteralPath $PSScriptRoot
 $tempName = 'BDDR-tippecanoe.geojsonl'
-$tempPath = Join-Path $PSScriptRoot $tempName
+$tempPath = Join-Path $dataDir $tempName
 $mbtilesName = 'BDDR.mbtiles'
-$mbtilesPath = Join-Path $PSScriptRoot $mbtilesName
+$mbtilesPath = Join-Path $dataDir $mbtilesName
 $outputName = Split-Path -Leaf $OutputPmTiles
 
 Write-Host "Dang chuan bi GeoJSONL cho tippecanoe ..."
