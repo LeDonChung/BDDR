@@ -98,7 +98,7 @@ function beginDirectRoute(latlng, label) {
   if (!startPoint) {
     pendingDirectRoute = true;
     showToast('Đang lấy vị trí hiện tại...');
-    if (typeof locateUser === 'function') locateUser(false);
+    if (typeof locateUser === 'function') locateUser(false, { userInitiated: true });
     return;
   }
 
@@ -246,7 +246,7 @@ async function findRoute() {
   const options = arguments[0] && !arguments[0].preventDefault ? arguments[0] : {};
   if (!startPoint || !endPoint) {
     showToast('Thiếu điểm xuất phát hoặc điểm đến');
-    if (!startPoint && typeof locateUser === 'function') locateUser(true);
+    if (!startPoint && typeof locateUser === 'function') locateUser(true, { userInitiated: true });
     return;
   }
   const btn = findRouteBtn();
@@ -561,6 +561,9 @@ async function startNavigation() {
   }
   if (!('geolocation' in navigator)) {
     showToast('Trình duyệt không hỗ trợ định vị realtime');
+    if (typeof showLocationPermissionHelp === 'function') {
+      showLocationPermissionHelp({ reason: 'unsupported' });
+    }
     return;
   }
 
@@ -568,19 +571,61 @@ async function startNavigation() {
     navigator.geolocation.clearWatch(navigationWatchId);
     navigationWatchId = null;
   }
+  lastNavPosition = null;
+  lastHeadingSource = 'none';
+  lastAccuracy = null;
+
+  // Request compass permission first, inside the user gesture. iOS Safari only
+  // allows DeviceOrientationEvent.requestPermission() within a user gesture, so call
+  // it before any other async work or the prompt is skipped and the compass never shows.
+  await requestDeviceHeading(true);
+
+  if (typeof getLocationPermissionState === 'function') {
+    const state = await getLocationPermissionState();
+    if (state === 'prompt') {
+      updateNavStatus('Trình duyệt sẽ hỏi quyền vị trí. Hãy chọn Cho phép.');
+    }
+  }
+
+  let seedPosition;
+  try {
+    seedPosition = (typeof requestLocationFix === 'function')
+      ? await requestLocationFix({ enableHighAccuracy: true, timeout: 12000, maximumAge: 0 })
+      : await getCurrentPositionAsync({ enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+  } catch (err) {
+    console.warn(err);
+    const msg = err.code === 1
+      ? 'Bạn chưa cấp quyền vị trí. Hãy cho phép truy cập vị trí để bắt đầu dẫn đường.'
+      : err.code === 3
+        ? 'GPS phản hồi chậm, chưa thể bắt đầu dẫn đường.'
+        : 'Chưa lấy được vị trí hiện tại để bắt đầu dẫn đường.';
+    updateNavStatus(msg);
+    showToast(msg);
+    if (typeof showLocationPermissionHelp === 'function') {
+      const reason = typeof getLocationHelpReason === 'function'
+        ? getLocationHelpReason(err)
+        : (err && err.code === 1 ? 'denied' : 'unavailable');
+      showLocationPermissionHelp({
+        reason,
+        onRetry: (reason === 'unsupported' || reason === 'insecure') ? null : () => startNavigation()
+      });
+    }
+    return;
+  }
+
+  const { latitude, longitude, accuracy, heading, speed } = seedPosition.coords;
+  const latlng = [latitude, longitude];
+  const gpsHeading = (Number.isFinite(heading) && Number.isFinite(speed) && speed > 0.5)
+    ? heading
+    : (Number.isFinite(heading) ? heading : null);
+  const computedHeading = getNavigationHeading(latlng, gpsHeading);
 
   isNavigating = true;
   followUser = true;
   followHeading = true;
   offRouteSince = null;
-  lastAccuracy = null;
-  lastHeadingSource = 'none';
+  lastAccuracy = Number.isFinite(accuracy) ? accuracy : null;
   navBearingCurrent = (map && typeof map.getBearing === 'function') ? map.getBearing() : 0;
-  // Request compass permission first, inside the user gesture. iOS Safari only
-  // allows DeviceOrientationEvent.requestPermission() within a user gesture, so call
-  // it before any other async work or the prompt is skipped and the compass never shows.
-  await requestDeviceHeading(true);
-  checkLocationPermission();
   requestWakeLock();
   setNavigationDriveMode(true);
   updateNavigationButtons();
@@ -590,8 +635,13 @@ async function startNavigation() {
 
   // Begin smooth camera follow from the current view (glides to the first GPS fix),
   // so the map tracks the user with no per-fix animation lag.
-  navFollowTarget = startPoint ? [startPoint[0], startPoint[1]] : null;
+  startPoint = latlng;
+  navFollowTarget = [latlng[0], latlng[1]];
   startNavFollowLoop();
+  setNavBearingTarget(computedHeading);
+  if (typeof setUserPosition === 'function') {
+    setUserPosition(latlng, accuracy, followUser, computedHeading, true);
+  }
 
   navigationWatchId = navigator.geolocation.watchPosition(
     onNavigationPosition,
@@ -642,6 +692,18 @@ function onNavigationError(err) {
       : 'GPS chưa ổn định, đang thử lại...';
   updateNavStatus(msg);
   showToast(msg);
+  if (err && err.code === 1) {
+    if (navigationWatchId !== null && 'geolocation' in navigator) {
+      navigator.geolocation.clearWatch(navigationWatchId);
+      navigationWatchId = null;
+    }
+    if (typeof showLocationPermissionHelp === 'function') {
+      showLocationPermissionHelp({
+        reason: 'denied',
+        onRetry: () => startNavigation()
+      });
+    }
+  }
 }
 
 function onNavigationPosition(pos) {
@@ -789,30 +851,25 @@ function setNavigationDriveMode(enabled) {
   }
 }
 
-// Luôn bật la bàn ngay khi có thể (kể cả khi chưa vào dẫn đường) để mũi tên
-// vị trí luôn xoay theo hướng thật của thiết bị. Trên iOS phải được gọi trong
-// user gesture nên ta bind vào lần click/chạm đầu tiên trên app.
-let compassAlwaysOnRequested = false;
-let compassAlwaysOnActive = false;
-
-function enableCompassAlwaysOn() {
-  if (compassAlwaysOnRequested) return;
-  compassAlwaysOnRequested = true;
-  requestDeviceHeading(false).then(ok => {
-    compassAlwaysOnActive = !!ok;
-  });
-}
-
-// Bắt cả sự kiện click + touchstart để iOS Safari nhận diện đây là user gesture
-// và cho phép gọi DeviceOrientationEvent.requestPermission().
-['click', 'touchstart', 'pointerdown'].forEach(evt => {
-  window.addEventListener(evt, enableCompassAlwaysOn, { once: true, passive: true });
-});
-
 async function requestDeviceHeading(showFeedback) {
   if (deviceOrientationActive) return true;
+  if (!window.isSecureContext) {
+    if (showFeedback) {
+      updateNavStatus('La bàn chỉ hoạt động ổn định khi mở trang bằng HTTPS.');
+      showToast('La bàn cần HTTPS');
+      if (typeof showCompassPermissionBlocked === 'function') {
+        showCompassPermissionBlocked(null);
+      }
+    }
+    return false;
+  }
   if (!('DeviceOrientationEvent' in window)) {
-    if (showFeedback) updateNavStatus('Thiết bị/trình duyệt không hỗ trợ la bàn.');
+    if (showFeedback) {
+      updateNavStatus('Thiết bị/trình duyệt không hỗ trợ la bàn.');
+      if (typeof showCompassPermissionBlocked === 'function') {
+        showCompassPermissionBlocked(null);
+      }
+    }
     return false;
   }
 
@@ -820,7 +877,6 @@ async function requestDeviceHeading(showFeedback) {
     window.addEventListener('deviceorientation', onDeviceOrientation, true);
     window.addEventListener('deviceorientationabsolute', onDeviceOrientation, true);
     deviceOrientationActive = true;
-    compassAlwaysOnActive = true;
     return true;
   };
 
@@ -836,6 +892,9 @@ async function requestDeviceHeading(showFeedback) {
       if (showFeedback) {
         updateNavStatus('iPhone đang chặn la bàn. Hãy bấm Cho phép khi Safari hỏi quyền Cảm biến chuyển động & định hướng.');
         showToast('La bàn chưa được cấp quyền trên iPhone');
+        if (typeof showCompassPermissionBlocked === 'function') {
+          showCompassPermissionBlocked(() => requestDeviceHeading(true));
+        }
       }
       return false;
     }
@@ -845,22 +904,11 @@ async function requestDeviceHeading(showFeedback) {
     if (showFeedback) {
       updateNavStatus('Không bật được la bàn. Nếu đang dùng iPhone, hãy cho phép Motion & Orientation Access rồi thử lại.');
       showToast('Không bật được la bàn');
+      if (typeof showCompassPermissionBlocked === 'function') {
+        showCompassPermissionBlocked(() => requestDeviceHeading(true));
+      }
     }
     return false;
-  }
-}
-
-async function checkLocationPermission() {
-  if (!navigator.permissions || !navigator.permissions.query) return;
-  try {
-    const status = await navigator.permissions.query({ name: 'geolocation' });
-    if (status.state === 'denied') {
-      updateNavStatus('Quyền vị trí đang bị chặn. Hãy cấp lại quyền định vị cho trang.');
-    } else if (status.state === 'prompt') {
-      updateNavStatus('Trình duyệt sẽ hỏi quyền vị trí. Hãy chọn Cho phép.');
-    }
-  } catch (e) {
-    console.warn(e);
   }
 }
 
@@ -977,7 +1025,7 @@ function stopNavBearingLoop() {
 
 function navBearingFrame() {
   navBearingRafId = null;
-  if (!followHeading || !isNavigating || !map || typeof map.setBearing === 'function') return;
+  if (!followHeading || !isNavigating || !map || typeof map.setBearing !== 'function') return;
   if (!Number.isFinite(navBearingTarget)) { navBearingRafId = requestAnimationFrame(navBearingFrame); return; }
 
   // Interpolate along the shortest arc -> smooth rotation, no long way around.

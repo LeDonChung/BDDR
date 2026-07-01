@@ -129,6 +129,25 @@
         </section>
     </div>
 
+    <div id="permissionModal" class="modal" aria-hidden="true">
+        <div class="modal__backdrop" data-modal-close></div>
+        <section class="modal__card" role="dialog" aria-modal="true" aria-labelledby="permissionModalTitle">
+            <button id="permissionModalCloseBtn" class="icon-btn modal__close" title="Đóng" aria-label="Đóng">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div class="modal__pin modal__pin--warning" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+            </div>
+            <h2 id="permissionModalTitle">Cần cấp quyền truy cập</h2>
+            <p id="permissionModalMessage" class="modal__text"></p>
+            <p id="permissionModalHint" class="modal__hint" hidden></p>
+            <div id="permissionModalActions" class="modal__actions modal__actions--single">
+                <button id="permissionModalCancelBtn" class="btn btn--ghost">Đóng</button>
+                <button id="permissionModalActionBtn" class="btn btn--primary" hidden>Thử lại</button>
+            </div>
+        </section>
+    </div>
+
     <!-- Routing panel (slide từ dưới trên mobile, bên trái trên desktop) -->
     <aside class="route-panel" id="routePanel" aria-hidden="true">
         <div class="route-panel__handle" aria-hidden="true"></div>
