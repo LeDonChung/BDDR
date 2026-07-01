@@ -4,6 +4,7 @@ let kmlLayer = null;
 let userMarker = null;
 let userAccuracyCircle = null;
 let currentUserHeading = null;
+let currentUserLatLng = null;
 let appliedMarkerAngle = null;
 let rotateTileRefreshTimer = null;
 let selectedLandmarkMarker = null;
@@ -29,16 +30,24 @@ let labelFeatures = [];
 let labelsLoaded = false;
 let labelLayer = null;
 let pmtilesLayer = null;
+let allowedLoginCodes = new Set();
+let currentAuthUser = null;
+let currentDataProfile = null;
+let appStarted = false;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
-const PMTILES_SOURCE = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr/BDDR.pmtiles';
-const LABELS_SOURCE = 'data/BDDR-labels.geojson';
-const GEOJSON_DATA_VERSION = '1.0.1';
+const DATA_ROOT = 'data';
+const USERS_SOURCE = DATA_ROOT + '/users.txt';
+// false: test local trong repo; true: doc PMTiles tren Cloudflare R2
+const USE_R2_PMTILES = false;
+const R2_PMTILES_BASE_URL = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr';
+const AUTH_STORAGE_KEY = 'bddr-auth-user';
+const GEOJSON_DATA_VERSION = '1.0.2';
 const KML_CACHE_DB = 'bddr-map-cache';
 const KML_CACHE_STORE = 'kml';
-const KML_CACHE_KEY = 'bddr-geojson';
-const APP_STATE_KEY = 'bddr-app-state';
+const KML_CACHE_KEY_PREFIX = 'bddr-geojson';
+const APP_STATE_KEY_PREFIX = 'bddr-app-state';
 const KML_RENDER_PADDING = 0.08;
 const KML_RENDER_CHUNK_SIZE = 120;
 const KML_RENDER_DEBOUNCE_MS = 220;
@@ -62,8 +71,259 @@ const KML_CODE_LABEL_MIN_PARTS = 40;
 const KML_CODE_LABEL_MAX_PARTS = 950;
 const KML_CODE_LABEL_LINE_PADDING = 0.00075;
 const FEATURE_CLICK_TOLERANCE_PX = 18;
+const VECTOR_STROKE_WEIGHT = Object.freeze({ detail: 1.15, normal: 1.45 });
+const TRUSO_VECTOR_STROKE_WIDTH = Object.freeze({ detail: 2.6, normal: 4.2 });
+const TRUSO_KML_STROKE_WEIGHT = Object.freeze({ satellite: 4.2, street: 4.6 });
+const GROUP_STYLE_COLORS = Object.freeze({
+  RanhOne: '#ffd84d',
+  RanhTwo: '#22d3ee',
+  RanhThree: '#d946ef',
+  RanhFour: '#6366f1',
+  RanhFive: '#f97316',
+  TruSo: '#ff3b3b'
+});
 
 const $ = (id) => document.getElementById(id);
+
+function useDistinctBoundaryColors() {
+  return !!(currentDataProfile && currentDataProfile.userCode === 'doankinhtecty75');
+}
+
+function getGroupColor(group) {
+  if (group === 'TruSo') return GROUP_STYLE_COLORS.TruSo;
+  if (!useDistinctBoundaryColors()) return '';
+  return GROUP_STYLE_COLORS[group] || '';
+}
+
+function getDefaultFeatureColor() {
+  if (!useDistinctBoundaryColors()) return GROUP_STYLE_COLORS.RanhOne;
+  return kmlStyleMode === 'satellite' ? GROUP_STYLE_COLORS.RanhOne : '#2563eb';
+}
+
+function getVectorFeatureVisualStyle(group, isLine, isDetailLabel) {
+  const strokeKey = isDetailLabel ? 'detail' : 'normal';
+  const isTruSo = group === 'TruSo';
+  const defaultColor = getDefaultFeatureColor();
+  const groupColor = getGroupColor(group);
+
+  return {
+    strokeColor: isTruSo ? groupColor : ((isLine && groupColor) ? groupColor : defaultColor),
+    fillColor: isTruSo ? groupColor : defaultColor,
+    strokeOpacity: isDetailLabel ? 0.95 : 1,
+    strokeWidth: isTruSo ? TRUSO_VECTOR_STROKE_WIDTH[strokeKey] : VECTOR_STROKE_WEIGHT[strokeKey],
+    fillOpacity: isTruSo ? (isDetailLabel ? 0.95 : 0.8) : (isDetailLabel ? 0.95 : 1),
+    isTruSo
+  };
+}
+
+// ===== AUTH / DATA PROFILE =====
+function normalizeLoginCode(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function resolveDataProfile(loginCode) {
+  const code = normalizeLoginCode(loginCode);
+  if (code === 'doankinhtecty75') {
+    return {
+      userCode: code,
+      folder: 'main',
+      dataDir: DATA_ROOT + '/main',
+      displayName: 'Toàn bộ vùng',
+      shortLabel: 'Công ty 75',
+      subtitle: 'Bản đồ đất đai - Toàn bộ vùng'
+    };
+  }
+
+  const teamMatch = code.match(/^cty75doi(\d{1,2})$/);
+  if (!teamMatch) return null;
+
+  const teamNumber = Number(teamMatch[1]);
+  if (!Number.isInteger(teamNumber) || teamNumber <= 0) return null;
+
+  const padded = String(teamNumber).padStart(2, '0');
+  return {
+    userCode: code,
+    folder: 'doi' + padded,
+    dataDir: DATA_ROOT + '/doi' + padded,
+    displayName: 'Đội ' + teamNumber,
+    shortLabel: 'Đội ' + teamNumber,
+    subtitle: 'Bản đồ đất đai - Đội ' + teamNumber
+  };
+}
+
+function buildPmtilesCandidates(profile) {
+  const localSource = profile.dataDir + '/BDDR.pmtiles';
+  if (!USE_R2_PMTILES) return [localSource];
+
+  const remoteFolderSource = R2_PMTILES_BASE_URL + '/' + profile.folder + '/BDDR.pmtiles';
+  // Giữ tương thích bản main cũ nếu trên R2 vẫn đang để ở root /bddr/BDDR.pmtiles
+  if (profile.folder === 'main') {
+    return [remoteFolderSource, R2_PMTILES_BASE_URL + '/BDDR.pmtiles', localSource];
+  }
+
+  return [remoteFolderSource, localSource];
+}
+
+function withProfileSources(profile) {
+  const pmtilesCandidates = buildPmtilesCandidates(profile);
+  return Object.assign({}, profile, {
+    pmtilesCandidates,
+    pmtilesSource: pmtilesCandidates[0],
+    labelsSource: profile.dataDir + '/BDDR-labels.geojson',
+    geojsonSource: profile.dataDir + '/BDDR.geojson'
+  });
+}
+
+function getKMLCacheKey() {
+  return KML_CACHE_KEY_PREFIX + ':' + (currentDataProfile ? currentDataProfile.folder : 'default');
+}
+
+function getAppStateKey() {
+  return APP_STATE_KEY_PREFIX + ':' + (currentDataProfile ? currentDataProfile.folder : 'default');
+}
+
+async function loadAllowedLoginCodes() {
+  const response = await fetch(USERS_SOURCE, { cache: 'no-store' });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+
+  const codes = (await response.text())
+    .split(/\r?\n/)
+    .map(line => normalizeLoginCode(line.replace(/#.*/, '')))
+    .filter(Boolean);
+
+  if (!codes.length) throw new Error('Danh sách đăng nhập trống');
+  allowedLoginCodes = new Set(codes);
+}
+
+function initLoginUI() {
+  const form = $('loginForm');
+  const accountBtn = $('accountBtn');
+
+  if (form) form.addEventListener('submit', onLoginSubmit);
+  if (accountBtn) accountBtn.addEventListener('click', logoutAndReload);
+}
+
+function setLoginError(message) {
+  const el = $('loginError');
+  if (el) el.textContent = message || '';
+}
+
+function setLoginBusy(busy, message) {
+  const input = $('loginCodeInput');
+  const button = $('loginSubmitBtn');
+  if (input) input.disabled = !!busy;
+  if (button) button.disabled = !!busy;
+  if (message !== undefined) setLoginError(message);
+}
+
+function showLoginScreen(message) {
+  const screen = $('loginScreen');
+  if (screen) {
+    screen.hidden = false;
+    screen.setAttribute('aria-hidden', 'false');
+  }
+  setLoginBusy(false, message || '');
+  const input = $('loginCodeInput');
+  if (input) setTimeout(() => input.focus(), 40);
+}
+
+function hideLoginScreen() {
+  const screen = $('loginScreen');
+  if (!screen) return;
+  screen.hidden = true;
+  screen.setAttribute('aria-hidden', 'true');
+}
+
+function applyDataProfileToUI() {
+  if (!currentDataProfile) return;
+
+  const subtitle = $('appSubtitle');
+  if (subtitle) subtitle.textContent = currentDataProfile.subtitle;
+
+  const accountLabel = $('accountLabel');
+  if (accountLabel) accountLabel.textContent = currentDataProfile.shortLabel;
+
+  const accountBtn = $('accountBtn');
+  if (accountBtn) {
+    accountBtn.title = 'Đổi đơn vị (' + currentDataProfile.displayName + ')';
+    accountBtn.setAttribute('aria-label', 'Đổi đơn vị');
+  }
+}
+
+function startAppForUser(loginCode) {
+  const normalized = normalizeLoginCode(loginCode);
+  if (!allowedLoginCodes.has(normalized)) {
+    throw new Error('Mã đăng nhập không hợp lệ');
+  }
+
+  const profile = resolveDataProfile(normalized);
+  if (!profile) {
+    throw new Error('Mã đăng nhập chưa có cấu hình dữ liệu');
+  }
+
+  currentAuthUser = normalized;
+  currentDataProfile = withProfileSources(profile);
+  localStorage.setItem(AUTH_STORAGE_KEY, normalized);
+  labelsLoaded = false;
+  labelFeatures = [];
+  applyDataProfileToUI();
+  hideLoginScreen();
+
+  if (appStarted) return;
+  appStarted = true;
+  initMap();
+  setTimeout(() => locateUser(!loadAppState()), 80);
+}
+
+function onLoginSubmit(event) {
+  event.preventDefault();
+  const input = $('loginCodeInput');
+  const code = normalizeLoginCode(input ? input.value : '');
+  if (!code) {
+    setLoginError('Vui lòng nhập mã đăng nhập');
+    if (input) input.focus();
+    return;
+  }
+
+  try {
+    setLoginBusy(true, '');
+    startAppForUser(code);
+  } catch (err) {
+    setLoginBusy(false, err.message || 'Không thể đăng nhập');
+    if (input) input.focus();
+  }
+}
+
+function logoutAndReload() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  window.location.reload();
+}
+
+async function bootstrapApp() {
+  initLoginUI();
+  setLoginBusy(true, 'Đang đọc danh sách đăng nhập...');
+
+  try {
+    await loadAllowedLoginCodes();
+  } catch (err) {
+    console.error('Không thể đọc danh sách đăng nhập', err);
+    showLoginScreen('Không đọc được data/users.txt');
+    return;
+  }
+
+  const savedUser = normalizeLoginCode(localStorage.getItem(AUTH_STORAGE_KEY));
+  if (savedUser && allowedLoginCodes.has(savedUser)) {
+    try {
+      startAppForUser(savedUser);
+      return;
+    } catch (err) {
+      console.warn('Không thể khôi phục đăng nhập', err);
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+  }
+
+  showLoginScreen('');
+}
 
 // ===== TILE LAYERS =====
 const osmLayer = L.tileLayer(
@@ -218,40 +478,82 @@ function promptRoutePick() {
 }
 
 // ===== KML =====
+async function dataAssetExists(source) {
+  if (!source) return false;
+  try {
+    const response = await fetch(source, { method: 'HEAD', cache: 'no-store' });
+    return response.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function resolveFirstAvailableSource(sources) {
+  for (const source of sources || []) {
+    if (await dataAssetExists(source)) return source;
+  }
+  return '';
+}
+
+async function loadGeoJSONFallback(source) {
+  const response = await fetch(source, { cache: 'no-store' });
+  if (!response.ok) throw new Error('HTTP ' + response.status + ' khi tải ' + source);
+  parseAndIndexGeoJSON(await response.text());
+}
+
 async function loadDefaultKML() {
   if (kmlLoaded) {
     scheduleVisibleKMLRender();
     return;
   }
 
+  if (!currentDataProfile) {
+    showLoginScreen('Vui lòng đăng nhập lại');
+    return;
+  }
+
   isInitialKMLLoading = true;
-  updateLoadingProgress(8, 'Đang tải lớp bản đồ PMTiles...');
+  updateLoadingProgress(8, 'Đang tải dữ liệu ' + currentDataProfile.displayName + '...');
 
   try {
     // Ưu tiên 1: tải nhãn (file nhỏ) để search hoạt động ngay.
     updateLoadingProgress(40, 'Đang tải dữ liệu tìm kiếm...');
     await awaitLabelsLoad();
 
-    // Ưu tiên 2: hiển thị basemap + user marker trước, PMTiles vector load
-    // chậm hơn 1 chút qua requestIdleCallback để bản đồ không bị giật khi vừa mở.
-    updateLoadingProgress(70, 'Đang tải các lớp vector...');
-    const schedulePMTiles = () => loadPMTilesLayer();
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(schedulePMTiles, { timeout: 1500 });
-    } else {
-      setTimeout(schedulePMTiles, 220);
+    const resolvedPmtilesSource = await resolveFirstAvailableSource(currentDataProfile.pmtilesCandidates);
+    if (resolvedPmtilesSource && window.protomapsL) {
+      currentDataProfile.pmtilesSource = resolvedPmtilesSource;
+      // Ưu tiên 2: hiển thị basemap + user marker trước, PMTiles vector load
+      // chậm hơn 1 chút qua requestIdleCallback để bản đồ không bị giật khi vừa mở.
+      updateLoadingProgress(70, 'Đang tải các lớp vector...');
+      const schedulePMTiles = () => loadPMTilesLayer();
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(schedulePMTiles, { timeout: 1500 });
+      } else {
+        setTimeout(schedulePMTiles, 220);
+      }
+
+      kmlLoaded = true;
+      kmlFeatures = [];
+      kmlActiveFeatures = new Set();
+      kmlFeatureGrid = new Map();
+      kmlLargeFeatures = [];
+      ctyCodeLabelBounds = [];
+      buildParcelSearchIndex();
+
+      finishLoadingProgress('Đã sẵn sàng');
+      showToast('Đã tải bản đồ ' + currentDataProfile.displayName);
+      return;
     }
 
-    kmlLoaded = true;
-    kmlFeatures = [];
-    kmlActiveFeatures = new Set();
-    kmlFeatureGrid = new Map();
-    kmlLargeFeatures = [];
-    ctyCodeLabelBounds = [];
-    buildParcelSearchIndex();
+    const geojsonReady = await dataAssetExists(currentDataProfile.geojsonSource);
+    if (geojsonReady) {
+      updateLoadingProgress(70, 'Đang tải GeoJSON...');
+      await loadGeoJSONFallback(currentDataProfile.geojsonSource);
+      return;
+    }
 
-    finishLoadingProgress('Đã sẵn sàng');
-    showToast('Đã tải bản đồ');
+    throw new Error('Chưa có BDDR.pmtiles hoặc BDDR.geojson cho ' + currentDataProfile.folder);
   } catch (err) {
     console.error(err);
     isInitialKMLLoading = false;
@@ -273,10 +575,21 @@ class BDDRVectorSymbolizer {
     const isDetailLabel = props.level === 4 || props.level === '4';
     const isLine = feature && (feature.geomType === 2 || feature.type === 2);
 
+    // Giữ feel hiển thị cũ cho phần polygon/text:
+    // - fill/stroke mặc định theo basemap
+    // - chỉ dùng màu layer cho nét line của Ranh*
+    // - TruSo vẫn là ngoại lệ màu đỏ như cũ
+    const group = String(props.group || '');
+    const visual = getVectorFeatureVisualStyle(group, isLine, isDetailLabel);
+
     // Vẽ polygon: mỗi ring 1 path riêng để fill đúng even-odd
     if (!isLine) {
-      context.fillStyle = '#ffd84d';
-      context.globalAlpha = isDetailLabel ? 0.95 : 1;
+      context.fillStyle = visual.fillColor;
+      context.strokeStyle = visual.strokeColor;
+      context.lineWidth = visual.strokeWidth;
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+      context.globalAlpha = visual.fillOpacity;
       for (let r = 0; r < geom.length; r++) {
         const ring = geom[r];
         if (!ring || ring.length < 3) continue;
@@ -287,16 +600,22 @@ class BDDRVectorSymbolizer {
         }
         context.closePath();
         context.fill();
+        if (visual.isTruSo) {
+          context.globalAlpha = 1;
+          context.stroke();
+          context.globalAlpha = visual.fillOpacity;
+        }
       }
+      context.globalAlpha = 1;
     }
 
     // Vẽ line: tất cả rings gộp vào 1 path → 1 stroke duy nhất
     if (isLine) {
-      context.strokeStyle = '#ffd84d';
-      context.lineWidth = isDetailLabel ? 1.15 : 1.45;
+      context.strokeStyle = visual.strokeColor;
+      context.lineWidth = visual.strokeWidth;
       context.lineJoin = 'round';
       context.lineCap = 'round';
-      context.globalAlpha = isDetailLabel ? 0.95 : 1;
+      context.globalAlpha = visual.strokeOpacity;
       context.beginPath();
       for (let r = 0; r < geom.length; r++) {
         const ring = geom[r];
@@ -307,12 +626,13 @@ class BDDRVectorSymbolizer {
         }
       }
       context.stroke();
+      context.globalAlpha = 1;
     }
   }
 }
 
 function loadPMTilesLayer() {
-  if (pmtilesLayer || !window.protomapsL) return;
+  if (pmtilesLayer || !window.protomapsL || !currentDataProfile) return;
 
   // Đặt pmtilesPane dưới rotatePane (nếu có) để lớp vector PMTiles xoay theo bản đồ
   // giống tilePane/overlayPane chuẩn. Nếu không, các thửa đất sẽ đứng yên khi xoay.
@@ -329,7 +649,7 @@ function loadPMTilesLayer() {
   pmtilesPaneEl.style.background = 'transparent';
 
   pmtilesLayer = protomapsL.leafletLayer({
-    url: PMTILES_SOURCE,
+    url: currentDataProfile.pmtilesSource,
     pane: 'pmtilesPane',
     backgroundColor: 'rgba(0,0,0,0)',
     paintRules: [{ dataLayer: 'bddr', symbolizer: new BDDRVectorSymbolizer() }],
@@ -363,7 +683,7 @@ async function loadCachedKMLText() {
 
   return new Promise((resolve) => {
     const tx = db.transaction(KML_CACHE_STORE, 'readonly');
-    const request = tx.objectStore(KML_CACHE_STORE).get(KML_CACHE_KEY);
+    const request = tx.objectStore(KML_CACHE_STORE).get(getKMLCacheKey());
     request.onsuccess = () => {
       const record = request.result;
       resolve(record && record.version === GEOJSON_DATA_VERSION ? record.text : null);
@@ -387,7 +707,7 @@ async function saveCachedKMLText(xml) {
   return new Promise((resolve) => {
     const tx = db.transaction(KML_CACHE_STORE, 'readwrite');
     tx.objectStore(KML_CACHE_STORE).put({
-      key: KML_CACHE_KEY,
+      key: getKMLCacheKey(),
       version: GEOJSON_DATA_VERSION,
       text: xml,
       savedAt: Date.now()
@@ -405,7 +725,7 @@ async function saveCachedKMLText(xml) {
 
 function loadAppState() {
   try {
-    const state = JSON.parse(localStorage.getItem(APP_STATE_KEY) || 'null');
+    const state = JSON.parse(localStorage.getItem(getAppStateKey()) || 'null');
     if (!state || !Array.isArray(state.center) || state.center.length !== 2) return null;
     if (!state.center.every(Number.isFinite)) return null;
     return state;
@@ -423,7 +743,7 @@ function saveAppState() {
   if (!map) return;
   const center = map.getCenter();
   const bearing = (typeof map.getBearing === 'function') ? map.getBearing() : 0;
-  localStorage.setItem(APP_STATE_KEY, JSON.stringify({
+  localStorage.setItem(getAppStateKey(), JSON.stringify({
     center: [center.lat, center.lng],
     zoom: map.getZoom(),
     bearing: Number.isFinite(bearing) ? bearing : 0,
@@ -455,7 +775,8 @@ function parseAndIndexGeoJSON(geoJsonText) {
       const name = properties.name || ('Thửa ' + (index + 1));
       const desc = properties.description || '';
       const level = Number.isFinite(Number(properties.level)) ? Number(properties.level) : null;
-      count += addGeoJSONGeometry(feature.geometry, name, desc, level);
+      const group = String(properties.group || '');
+      count += addGeoJSONGeometry(feature.geometry, name, desc, level, group, properties);
     });
 
     kmlLoaded = true;
@@ -474,19 +795,19 @@ function parseAndIndexGeoJSON(geoJsonText) {
   }
 }
 
-function addGeoJSONGeometry(geometry, name, desc, level) {
+function addGeoJSONGeometry(geometry, name, desc, level, group, properties) {
   if (!geometry) return 0;
 
   if (geometry.type === 'GeometryCollection') {
     return (geometry.geometries || []).reduce((total, child) => {
-      return total + addGeoJSONGeometry(child, name, desc, level);
+      return total + addGeoJSONGeometry(child, name, desc, level, group, properties);
     }, 0);
   }
 
   if (geometry.type === 'Polygon') {
     const latlngs = geoJSONPolygonToLatLngs(geometry.coordinates);
     if (!latlngs.length) return 0;
-    kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level));
+    kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level, group, properties));
     return 1;
   }
 
@@ -494,7 +815,7 @@ function addGeoJSONGeometry(geometry, name, desc, level) {
     return (geometry.coordinates || []).reduce((total, polygon) => {
       const latlngs = geoJSONPolygonToLatLngs(polygon);
       if (!latlngs.length) return total;
-      kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level));
+      kmlFeatures.push(createFeatureRecord('polygon', latlngs, name, desc, level, group, properties));
       return total + 1;
     }, 0);
   }
@@ -502,7 +823,7 @@ function addGeoJSONGeometry(geometry, name, desc, level) {
   if (geometry.type === 'LineString') {
     const latlngs = geoJSONLineToLatLngs(geometry.coordinates);
     if (!latlngs.length) return 0;
-    kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level));
+    kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level, group, properties));
     return 1;
   }
 
@@ -510,7 +831,7 @@ function addGeoJSONGeometry(geometry, name, desc, level) {
     return (geometry.coordinates || []).reduce((total, line) => {
       const latlngs = geoJSONLineToLatLngs(line);
       if (!latlngs.length) return total;
-      kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level));
+      kmlFeatures.push(createFeatureRecord('line', latlngs, name, desc, level, group, properties));
       return total + 1;
     }, 0);
   }
@@ -518,7 +839,7 @@ function addGeoJSONGeometry(geometry, name, desc, level) {
   if (geometry.type === 'Point') {
     const latlng = geoJSONPositionToLatLng(geometry.coordinates);
     if (!latlng) return 0;
-    kmlFeatures.push(createFeatureRecord('point', latlng, name, desc, level));
+    kmlFeatures.push(createFeatureRecord('point', latlng, name, desc, level, group, properties));
     return 1;
   }
 
@@ -526,7 +847,7 @@ function addGeoJSONGeometry(geometry, name, desc, level) {
     return (geometry.coordinates || []).reduce((total, point) => {
       const latlng = geoJSONPositionToLatLng(point);
       if (!latlng) return total;
-      kmlFeatures.push(createFeatureRecord('point', latlng, name, desc, level));
+      kmlFeatures.push(createFeatureRecord('point', latlng, name, desc, level, group, properties));
       return total + 1;
     }, 0);
   }
@@ -627,7 +948,7 @@ function parseAndIndexKML(xmlText) {
   }
 }
 
-function createFeatureRecord(type, latlngs, name, desc, level) {
+function createFeatureRecord(type, latlngs, name, desc, level, group, properties) {
   const flatLatLngs = type === 'point' ? [latlngs] : flattenLatLngs(latlngs);
   const bounds = L.latLngBounds(flatLatLngs);
   const center = bounds.getCenter();
@@ -645,6 +966,8 @@ function createFeatureRecord(type, latlngs, name, desc, level) {
     name,
     desc,
     level,
+    group,
+    properties: properties || {},
     bounds,
     centerLat: center.lat,
     centerLng: center.lng,
@@ -981,7 +1304,7 @@ function removeFeatureLayer(feature) {
 
 function buildFeatureLayer(feature) {
   let layer;
-  const style = getKMLFeatureStyle();
+  const style = getKMLFeatureStyle(feature);
   const options = {
     color: style.color,
     weight: style.weight,
@@ -1016,23 +1339,59 @@ function buildFeatureLayer(feature) {
 function onBaseLayerChange(event) {
   currentBaseLayer = event.layer;
   kmlStyleMode = currentBaseLayer === satelliteLayer ? 'satellite' : 'street';
+  updatePMTilesLayerStyles();
   updateKMLLayerStyles();
   saveAppState();
 }
 
-function getKMLFeatureStyle() {
+function updatePMTilesLayerStyles() {
+  if (!pmtilesLayer) return;
+  if (typeof pmtilesLayer.redraw === 'function') {
+    pmtilesLayer.redraw();
+    return;
+  }
+  if (map && map.hasLayer(pmtilesLayer)) {
+    map.removeLayer(pmtilesLayer);
+    pmtilesLayer.addTo(map);
+  }
+}
+
+function getKMLFeatureStyle(feature) {
+  const groupColor = getGroupColor(feature && feature.group);
+  const defaultColor = getDefaultFeatureColor();
+  const isTruSo = feature && feature.group === 'TruSo';
+  const isLine = feature && feature.type === 'line';
+  if (isTruSo) {
+    return {
+      color: groupColor,
+      fillColor: groupColor,
+      opacity: 0.95,
+      fillOpacity: kmlStyleMode === 'satellite' ? 0.4 : 0.32,
+      weight: TRUSO_KML_STROKE_WEIGHT[kmlStyleMode]
+    };
+  }
+
+  if (groupColor && isLine) {
+    return {
+      color: groupColor,
+      fillColor: defaultColor,
+      opacity: 0.95,
+      fillOpacity: 0.08,
+      weight: kmlStyleMode === 'satellite' ? 1.5 : 1.8
+    };
+  }
+
   if (kmlStyleMode === 'satellite') {
-    return { color: '#ffd84d', fillColor: '#ffd84d', opacity: 0.95, fillOpacity: 0.08, weight: 1.5 };
+    return { color: defaultColor, fillColor: defaultColor, opacity: 0.95, fillOpacity: 0.08, weight: 1.5 };
   }
   // Street mode (CartoDB Voyager - nen sang) - mau xanh duong dam noi tren nen sang
-  return { color: '#2563eb', fillColor: '#2563eb', opacity: 0.95, fillOpacity: 0.08, weight: 1.8 };
+  return { color: defaultColor, fillColor: defaultColor, opacity: 0.95, fillOpacity: 0.08, weight: 1.8 };
 }
 
 function updateKMLLayerStyles() {
-  const style = getKMLFeatureStyle();
   kmlActiveFeatures.forEach(feature => {
     if (feature.layer && typeof feature.layer.setStyle === 'function') {
-      feature.layer.setStyle(style);
+      feature.layer.setStyle(getKMLFeatureStyle(feature));
     }
   });
 }
@@ -1116,8 +1475,9 @@ function initParcelSearch() {
 
 async function awaitLabelsLoad() {
   if (labelsLoaded) return;
+  if (!currentDataProfile) return;
   try {
-    const response = await fetch(LABELS_SOURCE);
+    const response = await fetch(currentDataProfile.labelsSource, { cache: 'no-store' });
     if (!response.ok) throw new Error('HTTP ' + response.status);
     parseLabelsGeoJSON(await response.json());
     labelsLoaded = true;
@@ -1125,7 +1485,7 @@ async function awaitLabelsLoad() {
     const input = $('parcelSearchInput');
     if (input && input.value.trim()) showParcelSearchSuggestions(input.value);
   } catch (err) {
-    console.warn('Không thể tải label GeoJSON', err);
+    console.warn('Không thể tải label GeoJSON', currentDataProfile.labelsSource, err);
     labelsLoaded = true;
   }
 }
@@ -1170,14 +1530,13 @@ function buildParcelSearchIndex() {
       const desc = String(feature.desc || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       const fallbackLabel = 'Lô gần ' + formatLatLng({ lat: feature.centerLat, lng: feature.centerLng });
       const label = name === 'Điểm đã chọn' ? (desc || fallbackLabel) : name;
-      const extraFields = Object.values(feature.properties || {}).join(' ');
       return {
         type: 'parcel',
         feature,
         label,
         desc,
         center: [feature.centerLat, feature.centerLng],
-        searchText: buildParcelSearchText([name, desc, fallbackLabel, extraFields])
+        searchMeta: buildParcelSearchMeta([name, desc, fallbackLabel, feature.group], label)
       };
     });
 
@@ -1185,26 +1544,25 @@ function buildParcelSearchIndex() {
     const isParcelCode = Boolean(labelFeature.code);
     const displayCode = labelFeature.code || [labelFeature.unit, labelFeature.number].filter(Boolean).join(' ') || labelFeature.label;
     const areaText = isParcelCode && labelFeature.number ? 'Diện tích: ' + labelFeature.number + ' ha' : '';
-    // Gom tat ca gia tri tu properties vao searchText de bat ky truong nao cung tim duoc.
-    const extraFields = Object.values(labelFeature.properties || {}).join(' ');
+    const searchableNumber = isParcelCode ? '' : labelFeature.number;
     return {
       type: 'label',
       feature: null,
       label: displayCode,
       desc: areaText,
       center: labelFeature.center,
-      searchText: buildParcelSearchText([
+      searchMeta: buildParcelSearchMeta([
         labelFeature.label,
         labelFeature.code,
         labelFeature.unit,
-        labelFeature.number,
-        extraFields
-      ])
+        searchableNumber,
+        labelFeature.properties.layer
+      ], displayCode)
     };
   });
 
   parcelSearchIndex = polygonItems.concat(labelItems)
-    .filter(item => item.searchText.length > 0);
+    .filter(item => item.searchMeta && item.searchMeta.text.length > 0);
 }
 
 
@@ -1237,131 +1595,150 @@ function normalizeParcelSearchText(value) {
     .trim();
 }
 
-// ===== PARCEL SEARCH SCORING =====
-// searchText da duoc buildParcelSearchText() xay dung gom cac phan:
-//   1. baseText    (cac tu nguyen cach nhau boi space)
-//   2. compactText (giu lai dau gach ngan "C1-A")
-//   3. sortedChars (chuoi ky tu don le sorted: "157c1t")
-//   4. ngrams      (cac 2-gram lien tiep)
-// Muc tieu: khi user go "c1" (ky tu lien tiep) se match lien tiep truoc;
-// neu khong co term lien tiep, moi fallback sang kiem tra sortedChars de
-// dam bao go "c1" van ra "156 CT75" (vi "c" va "1" deu co trong sortedChars).
-function scoreParcelSearchItem(item, terms, normalizedQuery) {
-  const st = item.searchText;
-  if (!st) return 0;
-
-  // Tach phan baseText (phan co nghia nhat) - den ky tu '/' dau tien.
-  const slashIdx = st.indexOf('/');
-  const baseText = slashIdx > 0 ? st.substring(0, slashIdx).trim() : st;
-
-  // 1) Match chinh xac toan bo -> diem rat cao
-  if (baseText === normalizedQuery) return 100000;
-  if (baseText.startsWith(normalizedQuery)) return 90000;
-
-  // 2) Moi term phai co mat lien tiep trong baseText
-  const allTermsInBase = terms.every(term => baseText.includes(term));
-  if (!allTermsInBase) {
-    // 3) Fallback: kiem tra moi ky tu cua term co trong toan bo searchText khong
-    // (nho sortedChars, moi ky tu deu co mat o mot vi tri nao do).
-    // Dong thoi kiem tra 2-gram (ngrams phan 4) de tang diem khi match lien tiep.
-    let charScore = 0;
-    const allCharsPresent = terms.every(term => {
-      const chars = term.replace(/[^a-z0-9]/g, '');
-      const allChars = chars.split('').every(c => st.includes(c));
-      if (!allChars) return false;
-      // Thuong gap lien tiep trong ngrams phan 4 - vi du "c1" trong "c1-a" se
-      // xuat hien nhu 2-gram "c1". Kiem tra tung cap ky tu lien tiep co trong st.
-      let bigramHits = 0;
-      for (let i = 0; i < chars.length - 1; i++) {
-        if (st.includes(chars.substr(i, 2))) bigramHits++;
-      }
-      charScore += allChars ? 100 : 0;
-      charScore += bigramHits * 200;
-      return true;
-    });
-    if (!allCharsPresent) return 0;
-    // Diem fallback - uu tien bigram lien tiep
-    return charScore;
+function normalizeParcelSearchToken(value) {
+  const normalized = normalizeParcelSearchText(value);
+  if (!normalized) return '';
+  if (/^\d+$/.test(normalized)) {
+    const stripped = normalized.replace(/^0+/, '');
+    return stripped || '0';
   }
-
-  // 4) Term-level match trong baseText
-  let score = 0;
-  for (const term of terms) {
-    if (baseText.startsWith(term)) {
-      score += 5000;
-    } else {
-      const idx = baseText.indexOf(term);
-      if (idx === 0) score += 4000;
-      else if (baseText[idx - 1] === ' ' || baseText[idx - 1] === '/' || baseText[idx - 1] === ',') {
-        score += 3000;
-      } else {
-        score += 1500;
-      }
-    }
-  }
-
-  // 5) Bonus neu label chinh xac / prefix match term
-  if (item.label) {
-    const rawLabel = normalizeParcelSearchText(item.label);
-    for (const term of terms) {
-      if (rawLabel === term) score += 8000;
-      else if (rawLabel.startsWith(term)) score += 4000;
-    }
-  }
-
-  return score;
+  return normalized;
 }
 
-// ===== PARCEL SEARCH (LOCAL ONLY) =====
-// buildParcelSearchText() tao ra mot searchText co kha nang match ca khi user
-// go "c1" hay "ct1" ngan gon. Ly do: cac lô co dang "156 CT75" hoac "5,86 C1-A..."
-// can duoc bam moi ky tu don le de khi user go "c1" (c + 1) van match duoc ca
-// "CT75" (c + t + 7 + 5) va "C1-A" (c + 1 + a).
-function buildParcelSearchText(parts) {
-  const joined = parts.filter(Boolean).join(' ');
+function tokenizeParcelSearchText(value) {
+  return normalizeParcelSearchText(value)
+    .split(/\s+/)
+    .map(normalizeParcelSearchToken)
+    .filter(Boolean);
+}
 
-  // Normalize ky tu dac biet: bo dau, viet thuong, giu chu + so + slash.
-  function norm(s) {
-    return String(s || '')
+function buildParcelSearchMeta(parts, label) {
+  const rawText = parts.filter(Boolean).join(' ');
+  const text = normalizeParcelSearchText(rawText);
+  const labelText = normalizeParcelSearchText(label);
+  const tokens = Array.from(new Set(
+    tokenizeParcelSearchText(text).concat(tokenizeParcelSearchText(labelText))
+  ));
+
+  return {
+    text,
+    labelText,
+    tokens,
+    tokenSet: new Set(tokens),
+    fuzzyText: String(rawText || '')
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
-      .replace(/đ/g, 'd');
-  }
+      .replace(/đ/g, 'd')
+      .replace(/[^a-z0-9]/g, '')
+  };
+}
 
-  // 1. Text thuong (bo ky tu dac biet thanh space)
-  const baseText = norm(joined).replace(/[^a-z0-9\/]+/g, ' ').trim();
+function buildParcelSearchQuery(value) {
+  const tokens = tokenizeParcelSearchText(value);
+  return {
+    text: tokens.join(' '),
+    tokens
+  };
+}
 
-  // 2. Text giu lai (chi bo dau, khong replace ky tu dac biet thanh space) -
-  // giup "C1-A" thanh "c1-a" (giu dau gach ngang) de match "C1" voi "C1-A".
-  const compactText = norm(joined).replace(/[^a-z0-9\/\-]+/g, ' ').trim();
+function isParcelSearchBoundaryChar(char) {
+  return !char || char === ' ' || char === '/';
+}
 
-  // 3. Chui ky tu don le (sorted + unique) - dam bao moi ky tu deu co mat de
-  // ho tro "fuzzy char" search nhu "c1" -> match "ct75 156".
-  const charSet = norm(joined).replace(/[^a-z0-9]/g, '');
-  const sortedChars = Array.from(new Set(charSet.split(''))).sort().join('');
+function findParcelSearchPhraseIndex(text, phrase) {
+  if (!text || !phrase) return -1;
 
-  // 4. Tất cả 2-char sliding window từ chui (chỉ với chuỗi ngắn: 4-12 ky tu)
-  // giúp "c1" match duoc "C1-A" (co substring "c1" qua "-a").
-  let ngrams = '';
-  const compact = norm(joined).replace(/[^a-z0-9]/g, '');
-  if (compact.length >= 2 && compact.length <= 16) {
-    for (let i = 0; i < compact.length - 1; i++) {
-      ngrams += compact.substr(i, 2) + ' ';
+  let start = text.indexOf(phrase);
+  while (start !== -1) {
+    const prev = start === 0 ? '' : text.charAt(start - 1);
+    const next = text.charAt(start + phrase.length);
+    if (isParcelSearchBoundaryChar(prev) && isParcelSearchBoundaryChar(next)) {
+      return start;
     }
+    start = text.indexOf(phrase, start + 1);
   }
 
-  return normalizeParcelSearchText([baseText, compactText, sortedChars, ngrams.trim()].join(' '));
+  return -1;
+}
+
+function scoreParcelSearchItem(item, query) {
+  const meta = item && item.searchMeta;
+  if (!meta || !meta.text || !query || !query.tokens.length) return null;
+
+  const phrase = query.text;
+  const labelPhraseIndex = findParcelSearchPhraseIndex(meta.labelText, phrase);
+  const textPhraseIndex = findParcelSearchPhraseIndex(meta.text, phrase);
+  const phraseIndex = labelPhraseIndex >= 0 ? labelPhraseIndex : textPhraseIndex;
+
+  if (meta.labelText === phrase || meta.text === phrase) {
+    return { tier: 5, score: 140000 };
+  }
+  if (phraseIndex === 0) {
+    return { tier: 4, score: 120000 };
+  }
+
+  let exactMatches = 0;
+
+  for (const term of query.tokens) {
+    if (meta.tokenSet.has(term)) {
+      exactMatches++;
+      continue;
+    }
+    return null;
+  }
+
+  const tier = exactMatches === query.tokens.length ? 3 : 1;
+  let score = exactMatches * 5000;
+
+  if (phraseIndex > 0) {
+    score += Math.max(400, 2200 - (phraseIndex * 40));
+  }
+  if (meta.labelText.startsWith(query.tokens[0])) {
+    score += 900;
+  }
+
+  return { tier, score };
+}
+
+function getCurrentParcelSearchLatLng() {
+  if (currentUserLatLng) return currentUserLatLng;
+  if (userMarker && typeof userMarker.getLatLng === 'function') return userMarker.getLatLng();
+  return null;
+}
+
+function getParcelSearchDistanceMeters(center) {
+  const currentLatLng = getCurrentParcelSearchLatLng();
+  if (!currentLatLng || !Array.isArray(center) || center.length < 2) return Infinity;
+  return currentLatLng.distanceTo(L.latLng(center[0], center[1]));
+}
+
+function compareParcelSearchResults(a, b) {
+  if (b.match.tier !== a.match.tier) return b.match.tier - a.match.tier;
+
+  const aDistance = Number.isFinite(a.distanceMeters) ? a.distanceMeters : Infinity;
+  const bDistance = Number.isFinite(b.distanceMeters) ? b.distanceMeters : Infinity;
+  if (aDistance !== bDistance) return aDistance - bDistance;
+
+  if (b.match.score !== a.match.score) return b.match.score - a.match.score;
+  return a.item.label.localeCompare(b.item.label, 'vi');
+}
+
+function formatParcelSearchDistance(distanceMeters) {
+  if (!Number.isFinite(distanceMeters)) return '';
+  if (distanceMeters < 1000) return Math.round(distanceMeters) + ' m';
+  if (distanceMeters < 10000) return (distanceMeters / 1000).toFixed(1) + ' km';
+  return (distanceMeters / 1000).toFixed(0) + ' km';
 }
 
 function showParcelSearchSuggestions(query) {
   const suggestions = $('parcelSearchSuggestions');
   if (!suggestions) return;
 
-  const normalized = normalizeParcelSearchText(query);
+  const searchQuery = buildParcelSearchQuery(query);
   parcelSearchActiveIndex = -1;
 
-  if (!normalized) {
+  if (!searchQuery.tokens.length) {
     suggestions.hidden = true;
     suggestions.innerHTML = '';
     parcelSearchResults = [];
@@ -1375,13 +1752,19 @@ function showParcelSearchSuggestions(query) {
     return;
   }
 
-  const terms = normalized.split(/\s+/).filter(Boolean);
   parcelSearchResults = parcelSearchIndex
-    .map(item => ({ item, score: scoreParcelSearchItem(item, terms, normalized) }))
-    .filter(result => result.score > 0)
-    .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label, 'vi'))
-    .slice(0, 15)
-    .map(result => result.item);
+    .map(item => {
+      const match = scoreParcelSearchItem(item, searchQuery);
+      if (!match) return null;
+      return {
+        item,
+        match,
+        distanceMeters: getParcelSearchDistanceMeters(item.center)
+      };
+    })
+    .filter(Boolean)
+    .sort(compareParcelSearchResults)
+    .map(result => Object.assign({}, result.item, { distanceMeters: result.distanceMeters }));
 
   suggestions.hidden = false;
   if (!parcelSearchResults.length) {
@@ -1390,10 +1773,17 @@ function showParcelSearchSuggestions(query) {
   }
 
   suggestions.innerHTML = parcelSearchResults.map((item, index) =>
-    '<button type="button" class="search-suggestion" data-search-index="' + index + '">' +
-      '<strong>' + escapeHtml(item.label) + '</strong>' +
-      '<span>' + escapeHtml(item.desc || formatLatLng({ lat: item.center[0], lng: item.center[1] })) + '</span>' +
-    '</button>'
+    (() => {
+      const secondaryParts = [];
+      if (item.desc) secondaryParts.push(item.desc);
+      const distanceText = formatParcelSearchDistance(item.distanceMeters);
+      if (distanceText) secondaryParts.push(distanceText);
+      if (!secondaryParts.length) secondaryParts.push(formatLatLng({ lat: item.center[0], lng: item.center[1] }));
+      return '<button type="button" class="search-suggestion" data-search-index="' + index + '">' +
+        '<strong>' + escapeHtml(item.label) + '</strong>' +
+        '<span>' + escapeHtml(secondaryParts.join(' • ')) + '</span>' +
+      '</button>';
+    })()
   ).join('');
 
   suggestions.querySelectorAll('[data-search-index]').forEach(button => {
@@ -1897,6 +2287,8 @@ function updateUserMarkerRotation(instant) {
   wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
 }
 function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
+  currentUserLatLng = L.latLng(latlng[0], latlng[1]);
+
   // Ưu tiên la bàn thiết bị khi đã bật: mũi tên xoay mượt và chính xác hơn GPS.
   // GPS heading chỉ dùng khi chưa có la bàn (fallback cho thiết bị không có).
   if (typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive
@@ -1954,6 +2346,16 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
   }
   const startInput = $('startAddress');
   if (startInput) startInput.value = formatLatLng({ lat: latlng[0], lng: latlng[1] });
+  const parcelSearchInput = $('parcelSearchInput');
+  const parcelSearchSuggestions = $('parcelSearchSuggestions');
+  if (
+    parcelSearchInput &&
+    parcelSearchSuggestions &&
+    !parcelSearchSuggestions.hidden &&
+    parcelSearchInput.value.trim()
+  ) {
+    showParcelSearchSuggestions(parcelSearchInput.value);
+  }
 
   if (pan && navigationMode) {
     // During navigation the camera is driven by the smooth requestAnimationFrame
@@ -1967,8 +2369,7 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
 
 // ===== BOOT =====
 document.addEventListener('DOMContentLoaded', () => {
-  initMap();
-  setTimeout(() => locateUser(!loadAppState()), 80);
+  bootstrapApp();
 });
 
 

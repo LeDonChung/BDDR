@@ -9,6 +9,24 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <section id="loginScreen" class="login-screen" aria-hidden="false">
+        <form id="loginForm" class="login-panel" autocomplete="off">
+            <div class="login-panel__brand">
+                <div>
+                    <h1>Công ty 75</h1>
+                    <p>Bản đồ đất đai theo đơn vị</p>
+                </div>
+            </div>
+            <label for="loginCodeInput">Mã đăng nhập</label>
+            <input id="loginCodeInput" type="text" inputmode="text" autocomplete="username" spellcheck="false" placeholder="" aria-describedby="loginError">
+            <p id="loginError" class="login-panel__error" role="alert"></p>
+            <button id="loginSubmitBtn" class="btn btn--primary" type="submit">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/></svg>
+                Vào bản đồ
+            </button>
+        </form>
+    </section>
+
     <!-- Header gọn cho ứng dụng bản đồ -->
     <header class="app-header">
         <div class="app-header__left">
@@ -21,11 +39,15 @@
             </div>
         </div>
         <div class="app-search" role="search">
-            <input id="parcelSearchInput" type="search" autocomplete="off" placeholder="Tìm lô: C17, C18, 2/19..." aria-label="Tìm lô đất">
+            <input id="parcelSearchInput" type="search" autocomplete="off" placeholder="Tìm lô, đội: C17, C18, Đội 1..." aria-label="Tìm lô đất">
             <button id="parcelSearchClearBtn" class="app-search__clear" type="button" title="Xóa tìm kiếm" aria-label="Xóa tìm kiếm">×</button>
             <div id="parcelSearchSuggestions" class="app-search__suggestions" hidden></div>
         </div>
         <div class="app-header__right">
+            <button id="accountBtn" class="account-btn" type="button" title="Đổi đơn vị" aria-label="Đổi đơn vị">
+                <span id="accountLabel">Đơn vị</span>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5"/><path d="m21 3-7 7"/><path d="M8 21H3v-5"/><path d="m3 21 7-7"/></svg>
+            </button>
             <button id="locateBtn" class="icon-btn" title="Vị trí của tôi" aria-label="Vị trí của tôi">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
             </button>
