@@ -839,59 +839,11 @@ class BDDRVectorSymbolizer {
   }
 }
 
-// PMTiles tile cache - lưu tiles đã tải để không reload khi zoom
-const pmtilesTileCache = new Map();
-const pmtilesPendingRequests = new Map();
-const CACHE_MAX_SIZE = 500;
-let originalFetchFn = null; // Lưu reference gốc trước khi patch
-
-function cachedFetch(url) {
-  // Return cached response if available
-  if (pmtilesTileCache.has(url)) {
-    return Promise.resolve(new Response(pmtilesTileCache.get(url), {
-      headers: { 'Content-Type': 'application/x-protobuf' }
-    }));
-  }
-  
-  // Return pending promise if request is in progress
-  if (pmtilesPendingRequests.has(url)) {
-    return pmtilesPendingRequests.get(url);
-  }
-  
-  const promise = (originalFetchFn || fetch)(url)
-    .then(response => {
-      if (!response.ok && response.status !== 200) {
-        pmtilesPendingRequests.delete(url);
-        return response;
-      }
-      return response.arrayBuffer().then(buffer => {
-        if (pmtilesTileCache.size >= CACHE_MAX_SIZE) {
-          const keysToDelete = [...pmtilesTileCache.keys()].slice(0, 100);
-          keysToDelete.forEach(key => pmtilesTileCache.delete(key));
-        }
-        pmtilesTileCache.set(url, buffer);
-        pmtilesPendingRequests.delete(url);
-        return new Response(buffer, {
-          headers: { 'Content-Type': 'application/x-protobuf' }
-        });
-      });
-    })
-    .catch(err => {
-      pmtilesPendingRequests.delete(url);
-      throw err;
-    });
-  
-  pmtilesPendingRequests.set(url, promise);
-  return promise;
-}
+// PMTiles đã có internal cache - không cần thêm fetch cache
+// Để tile không reload khi zoom, dùng browser cache headers
 
 function loadPMTilesLayer() {
   if (pmtilesLayer || !window.protomapsL || !currentDataProfile) return;
-
-  // Lưu reference gốc TRƯỚC KHI patch
-  if (!originalFetchFn) {
-    originalFetchFn = window.fetch.bind(window);
-  }
 
   const rotateParent = map.getPane('rotatePane') || map.getPane('mapPane');
   if (!map.getPane('pmtilesPane')) {
@@ -916,14 +868,6 @@ function loadPMTilesLayer() {
   });
   
   pmtilesLayer.addTo(map);
-  
-  // Intercept fetch với monkey-patch
-  window.fetch = function(url, options) {
-    if (typeof url === 'string' && url.includes('.pmtiles')) {
-      return cachedFetch(url);
-    }
-    return originalFetchFn(url, options);
-  };
 }
 
 function openKMLCacheDB() {
@@ -1611,14 +1555,11 @@ function onBaseLayerChange(event) {
 
 function updatePMTilesLayerStyles() {
   if (!pmtilesLayer) return;
+  // Chỉ redraw, KHÔNG remove/re-add để tránh reload tiles
   if (typeof pmtilesLayer.redraw === 'function') {
     pmtilesLayer.redraw();
-    return;
   }
-  if (map && map.hasLayer(pmtilesLayer)) {
-    map.removeLayer(pmtilesLayer);
-    pmtilesLayer.addTo(map);
-  }
+  // Không remove/re-add nữa - gây reload không cần thiết
 }
 
 function getKMLFeatureStyle(feature) {
