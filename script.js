@@ -843,6 +843,7 @@ class BDDRVectorSymbolizer {
 const pmtilesTileCache = new Map();
 const pmtilesPendingRequests = new Map();
 const CACHE_MAX_SIZE = 500;
+let originalFetchFn = null; // Lưu reference gốc trước khi patch
 
 function cachedFetch(url) {
   // Return cached response if available
@@ -857,7 +858,7 @@ function cachedFetch(url) {
     return pmtilesPendingRequests.get(url);
   }
   
-  const promise = fetch(url)
+  const promise = (originalFetchFn || fetch)(url)
     .then(response => {
       if (!response.ok && response.status !== 200) {
         pmtilesPendingRequests.delete(url);
@@ -887,6 +888,11 @@ function cachedFetch(url) {
 function loadPMTilesLayer() {
   if (pmtilesLayer || !window.protomapsL || !currentDataProfile) return;
 
+  // Lưu reference gốc TRƯỚC KHI patch
+  if (!originalFetchFn) {
+    originalFetchFn = window.fetch.bind(window);
+  }
+
   const rotateParent = map.getPane('rotatePane') || map.getPane('mapPane');
   if (!map.getPane('pmtilesPane')) {
     map.createPane('pmtilesPane', rotateParent);
@@ -911,13 +917,12 @@ function loadPMTilesLayer() {
   
   pmtilesLayer.addTo(map);
   
-  // Intercept fetch với monkey-patch đơn giản
-  const originalFetch = window.fetch.bind(window);
+  // Intercept fetch với monkey-patch
   window.fetch = function(url, options) {
     if (typeof url === 'string' && url.includes('.pmtiles')) {
       return cachedFetch(url);
     }
-    return originalFetch(url, options);
+    return originalFetchFn(url, options);
   };
 }
 
