@@ -40,7 +40,7 @@ const DEFAULT_ZOOM = 15;
 const DATA_ROOT = 'data';
 const USERS_SOURCE = DATA_ROOT + '/users.txt';
 // false: test local trong repo; true: doc PMTiles tren Cloudflare R2
-const USE_R2_PMTILES = false;
+const USE_R2_PMTILES = true;
 const R2_PMTILES_BASE_URL = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr';
 const AUTH_STORAGE_KEY = 'bddr-auth-user';
 const GEOJSON_DATA_VERSION = '1.0.2';
