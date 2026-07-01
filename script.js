@@ -34,6 +34,7 @@ let allowedLoginCodes = new Set();
 let currentAuthUser = null;
 let currentDataProfile = null;
 let appStarted = false;
+let permissionModalAction = null;
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
@@ -84,6 +85,27 @@ const GROUP_STYLE_COLORS = Object.freeze({
 });
 
 const $ = (id) => document.getElementById(id);
+
+function getPlatformPermissionHint(kind) {
+  const ua = navigator.userAgent || '';
+  const isiOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+
+  if (kind === 'compass') {
+    if (isiOS) return 'iPhone/iPad: vào Cài đặt > Safari > Motion & Orientation Access, bật quyền này rồi mở lại trang.';
+    if (isAndroid) return 'Android: mở cài đặt trang trong Chrome, cho phép cảm biến/chuyển động nếu trình duyệt có mục này.';
+    return 'Trình duyệt có thể đang chặn cảm biến chuyển động hoặc la bàn. Hãy kiểm tra quyền của trang.';
+  }
+
+  if (isiOS) return 'iPhone/iPad: bấm aA hoặc ổ khóa trên thanh địa chỉ, mở Cài đặt trang web và cho phép Vị trí.';
+  if (isAndroid) return 'Android: bấm biểu tượng ổ khóa trên thanh địa chỉ, vào Quyền và cho phép Vị trí.';
+  return 'Hãy mở cài đặt quyền của trang trong trình duyệt và cho phép Vị trí.';
+}
+
+function isIOSLikeDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
 
 function useDistinctBoundaryColors() {
   return !!(currentDataProfile && currentDataProfile.userCode === 'doankinhtecty75');
@@ -418,14 +440,14 @@ function initMap() {
   map.on('click', onMapBackgroundClick);
   map.on('rotate', onMapRotate);
 
-  $('locateBtn').addEventListener('click', () => locateUser());
+  $('locateBtn').addEventListener('click', () => locateUser(true, { userInitiated: true }));
   $('routeBtn').addEventListener('click', promptRoutePick);
 
   initRouting();
+  initPermissionModal();
   initRouteConfirmModal();
   initParcelSearch();
   setOverlayVisible(false);
-  startGeoWatch();
 }
 
 function setOverlayVisible(visible) {
@@ -469,6 +491,192 @@ function showToast(message, ms) {
   t.classList.add('show');
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+function getCurrentPositionAsync(options) {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options);
+  });
+}
+
+function showLocationPermissionBlocked(onRetry) {
+  showPermissionModal({
+    title: 'Cần quyền vị trí',
+    message: 'Trình duyệt đang chặn quyền vị trí nên app chưa lấy được GPS hiện tại.',
+    hint: getPlatformPermissionHint('location'),
+    cancelLabel: 'Đóng',
+    actionLabel: typeof onRetry === 'function' ? 'Thử lại' : '',
+    onAction: onRetry || null
+  });
+}
+
+function showCompassPermissionBlocked(onRetry) {
+  showPermissionModal({
+    title: 'Cần quyền la bàn',
+    message: 'Thiết bị hoặc trình duyệt đang chặn truy cập cảm biến chuyển động/la bàn.',
+    hint: getPlatformPermissionHint('compass'),
+    cancelLabel: 'Đóng',
+    actionLabel: typeof onRetry === 'function' ? 'Thử lại' : '',
+    onAction: onRetry || null
+  });
+}
+
+function showPermissionModal(options) {
+  options = options || {};
+  const modal = $('permissionModal');
+  if (!modal) {
+    if (options.message) showToast(options.message, 3200);
+    return;
+  }
+
+  const titleEl = $('permissionModalTitle');
+  const messageEl = $('permissionModalMessage');
+  const hintEl = $('permissionModalHint');
+  const actionsEl = $('permissionModalActions');
+  const cancelBtn = $('permissionModalCancelBtn');
+  const actionBtn = $('permissionModalActionBtn');
+
+  permissionModalAction = typeof options.onAction === 'function' ? options.onAction : null;
+
+  if (titleEl) titleEl.textContent = options.title || 'Cần cấp quyền truy cập';
+  if (messageEl) messageEl.textContent = options.message || '';
+  if (hintEl) {
+    hintEl.textContent = options.hint || '';
+    hintEl.hidden = !options.hint;
+  }
+  if (cancelBtn) {
+    cancelBtn.textContent = options.cancelLabel || 'Đóng';
+  }
+  if (actionBtn) {
+    const hasAction = !!options.actionLabel && permissionModalAction;
+    actionBtn.hidden = !hasAction;
+    actionBtn.textContent = hasAction ? options.actionLabel : 'Thử lại';
+  }
+  if (actionsEl) {
+    actionsEl.classList.toggle('modal__actions--single', !(options.actionLabel && permissionModalAction));
+  }
+
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function closePermissionModal() {
+  const modal = $('permissionModal');
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+  permissionModalAction = null;
+}
+
+function initPermissionModal() {
+  const modal = $('permissionModal');
+  if (!modal) return;
+
+  const close = () => closePermissionModal();
+  const cancelBtn = $('permissionModalCancelBtn');
+  const actionBtn = $('permissionModalActionBtn');
+  const closeBtn = $('permissionModalCloseBtn');
+
+  if (cancelBtn) cancelBtn.addEventListener('click', close);
+  if (closeBtn) closeBtn.addEventListener('click', close);
+  if (actionBtn) {
+    actionBtn.addEventListener('click', () => {
+      const action = permissionModalAction;
+      closePermissionModal();
+      if (typeof action === 'function') action();
+    });
+  }
+
+  modal.querySelectorAll('[data-modal-close]').forEach(el => {
+    el.addEventListener('click', close);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.classList.contains('open')) {
+      close();
+    }
+  });
+}
+
+function getLocationPermissionState() {
+  if (!navigator.permissions || !navigator.permissions.query) {
+    return Promise.resolve('unknown');
+  }
+  return navigator.permissions.query({ name: 'geolocation' })
+    .then(status => (status && status.state) ? status.state : 'unknown')
+    .catch(() => 'unknown');
+}
+
+function requestLocationFix(options) {
+  const settings = Object.assign({
+    enableHighAccuracy: true,
+    timeout: 10000,
+    maximumAge: 0,
+    announcePrompt: false
+  }, options || {});
+
+  if (!('geolocation' in navigator)) {
+    return Promise.reject(Object.assign(new Error('Geolocation unsupported'), { code: 0 }));
+  }
+
+  return getLocationPermissionState().then(state => {
+    if (settings.announcePrompt && state === 'prompt') {
+      showToast('Trình duyệt sẽ hỏi quyền vị trí. Hãy chọn Cho phép.', 2600);
+    }
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: settings.enableHighAccuracy,
+        timeout: settings.timeout,
+        maximumAge: settings.maximumAge
+      });
+    });
+  });
+}
+
+function getLocationHelpReason(err) {
+  if (!window.isSecureContext) return 'insecure';
+  if (!('geolocation' in navigator)) return 'unsupported';
+  if (err && err.code === 1) return 'denied';
+  return 'unavailable';
+}
+
+function showLocationPermissionHelp(options) {
+  options = options || {};
+  const reason = options.reason || 'denied';
+  const ios = isIOSLikeDevice();
+  let title = 'Chưa truy cập được vị trí';
+  let message = 'Trình duyệt chưa cho app lấy được vị trí hiện tại.';
+  let hint = ios
+    ? 'Safari: chạm aA > Website Settings > Location > Allow, rồi quay lại app.'
+    : 'Chrome/Android: mở biểu tượng ổ khóa hoặc Site settings > Location > Allow, rồi quay lại app.';
+
+  if (reason === 'unsupported') {
+    title = 'Trình duyệt không hỗ trợ định vị';
+    message = 'Thiết bị hoặc WebView hiện tại không cung cấp Geolocation API cho trang web này.';
+    hint = 'Hãy mở app bằng Safari hoặc Chrome hệ thống trên điện thoại.';
+  } else if (reason === 'insecure') {
+    title = 'Vị trí cần HTTPS';
+    message = 'Trang này đang chạy ngoài secure context nên nhiều máy Android/iPhone sẽ chặn vị trí và cảm biến.';
+    hint = 'Hãy mở trang bằng HTTPS hoặc localhost để trình duyệt cho phép định vị.';
+  } else if (reason === 'unavailable') {
+    title = 'GPS chưa sẵn sàng';
+    message = 'Thiết bị chưa trả về được tọa độ hiện tại.';
+    hint = 'Hãy bật GPS chính xác cao, ra nơi thoáng hơn rồi bấm Thử lại.';
+  } else {
+    title = 'Quyền vị trí đang bị chặn';
+    message = 'Nếu bạn đã bấm Từ chối trước đó, trình duyệt có thể không hiện lại popup hệ thống cho tới khi quyền của trang được bật lại.';
+  }
+
+  const canRetry = typeof options.onRetry === 'function' && reason !== 'unsupported' && reason !== 'insecure';
+  showPermissionModal({
+    title,
+    message,
+    hint,
+    cancelLabel: 'Đóng',
+    actionLabel: canRetry ? 'Thử lại' : '',
+    onAction: canRetry ? options.onRetry : null
+  });
 }
 
 function promptRoutePick() {
@@ -631,11 +839,12 @@ class BDDRVectorSymbolizer {
   }
 }
 
+// PMTiles đã có internal cache - không cần thêm fetch cache
+// Để tile không reload khi zoom, dùng browser cache headers
+
 function loadPMTilesLayer() {
   if (pmtilesLayer || !window.protomapsL || !currentDataProfile) return;
 
-  // Đặt pmtilesPane dưới rotatePane (nếu có) để lớp vector PMTiles xoay theo bản đồ
-  // giống tilePane/overlayPane chuẩn. Nếu không, các thửa đất sẽ đứng yên khi xoay.
   const rotateParent = map.getPane('rotatePane') || map.getPane('mapPane');
   if (!map.getPane('pmtilesPane')) {
     map.createPane('pmtilesPane', rotateParent);
@@ -655,9 +864,9 @@ function loadPMTilesLayer() {
     paintRules: [{ dataLayer: 'bddr', symbolizer: new BDDRVectorSymbolizer() }],
     labelRules: [],
     maxDataZoom: 16,
-    // noWrap ngăn Leaflet request cùng tile nhiều lần do wrapping ngang
     noWrap: true
   });
+  
   pmtilesLayer.addTo(map);
 }
 
@@ -1346,14 +1555,11 @@ function onBaseLayerChange(event) {
 
 function updatePMTilesLayerStyles() {
   if (!pmtilesLayer) return;
+  // Chỉ redraw, KHÔNG remove/re-add để tránh reload tiles
   if (typeof pmtilesLayer.redraw === 'function') {
     pmtilesLayer.redraw();
-    return;
   }
-  if (map && map.hasLayer(pmtilesLayer)) {
-    map.removeLayer(pmtilesLayer);
-    pmtilesLayer.addTo(map);
-  }
+  // Không remove/re-add nữa - gây reload không cần thiết
 }
 
 function getKMLFeatureStyle(feature) {
@@ -2164,7 +2370,15 @@ function escapeHtml(s) {
 // va accuracy circle theo thoi gian thuc khi user di chuyen.
 let geoWatchId = null;
 
-function startGeoWatch() {
+function stopGeoWatch() {
+  if (geoWatchId !== null && 'geolocation' in navigator) {
+    navigator.geolocation.clearWatch(geoWatchId);
+    geoWatchId = null;
+  }
+}
+
+function startGeoWatch(forceRestart) {
+  if (forceRestart) stopGeoWatch();
   if (geoWatchId !== null) return;
   if (!('geolocation' in navigator)) return;
   geoWatchId = navigator.geolocation.watchPosition(
@@ -2179,49 +2393,76 @@ function startGeoWatch() {
     },
     (err) => {
       console.warn('watchPosition error', err);
-      // Loi permission: chi canh bao, van giu watch de thu lai.
+      if (err && err.code === 1) stopGeoWatch();
     },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
   );
 }
 
-function locateUser(pan) {
+async function locateUser(pan, options) {
   if (pan === undefined) pan = true;
+  options = options || {};
+  if (options.userInitiated && typeof requestDeviceHeading === 'function') {
+    try {
+      await requestDeviceHeading(true);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
   if (!('geolocation' in navigator)) {
     showToast('Trình duyệt không hỗ trợ định vị');
+    if (options.userInitiated) {
+      showLocationPermissionHelp({ reason: 'unsupported' });
+    }
     setUserPosition(DEFAULT_CENTER, null, pan);
     scheduleKMLLoad();
-    return;
+    return null;
   }
-  // Mac dinh theo doi lien tuc: dam bao watch dang chay.
-  startGeoWatch();
   showToast('Đang lấy vị trí...');
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const { latitude, longitude, accuracy, heading, speed } = pos.coords;
-      const latlng = [latitude, longitude];
-      const gpsHeading = (Number.isFinite(heading) && Number.isFinite(speed) && speed > 0.5)
-        ? heading
-        : (Number.isFinite(heading) ? heading : null);
-      setUserPosition(latlng, accuracy, pan, gpsHeading, false);
-      scheduleKMLLoad();
-      if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
-        tryAutoRoute();
-      }
-    },
-    (err) => {
-      console.warn(err);
-      const msg = err.code === 1 ? 'Bạn đã từ chối cấp vị trí' : 'Không lấy được vị trí';
-      showToast(msg);
-      const c = map.getCenter();
-      setUserPosition([c.lat, c.lng], null, pan);
-      scheduleKMLLoad();
-      if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
-        tryAutoRoute();
-      }
-    },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-  );
+  try {
+    const pos = await requestLocationFix({
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 60000,
+      announcePrompt: !!options.userInitiated
+    });
+    const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+    const latlng = [latitude, longitude];
+    const gpsHeading = (Number.isFinite(heading) && Number.isFinite(speed) && speed > 0.5)
+      ? heading
+      : (Number.isFinite(heading) ? heading : null);
+    setUserPosition(latlng, accuracy, pan, gpsHeading, false);
+    startGeoWatch(true);
+    scheduleKMLLoad();
+    if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
+      tryAutoRoute();
+    }
+    return pos;
+  } catch (err) {
+    console.warn(err);
+    const msg = err.code === 1
+      ? 'Bạn đã từ chối cấp vị trí'
+      : err.code === 3
+        ? 'GPS phản hồi chậm, hãy thử lại'
+        : 'Không lấy được vị trí';
+    showToast(msg);
+    if (options.userInitiated) {
+      const reason = getLocationHelpReason(err);
+      showLocationPermissionHelp({
+        reason,
+        onRetry: (reason === 'unsupported' || reason === 'insecure')
+          ? null
+          : () => locateUser(pan, Object.assign({}, options, { userInitiated: true }))
+      });
+    }
+    const c = map.getCenter();
+    setUserPosition([c.lat, c.lng], null, pan);
+    scheduleKMLLoad();
+    if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
+      tryAutoRoute();
+    }
+    return null;
+  }
 }
 
 // ===== MAP ROTATION (2-finger rotate like Google Maps) =====

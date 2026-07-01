@@ -697,12 +697,28 @@ html, body {
   box-shadow: 0 10px 24px rgba(79, 140, 255, 0.28);
   margin-bottom: 14px;
 }
+.modal__pin--warning {
+  background: #f59e0b;
+  box-shadow: 0 10px 24px rgba(245, 158, 11, 0.28);
+}
 .modal__card h2 {
   font-size: 18px;
   line-height: 1.25;
   font-weight: 700;
   padding-right: 34px;
   margin-bottom: 8px;
+}
+.modal__text {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+  margin-bottom: 10px;
+}
+.modal__hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 18px;
 }
 .modal__name {
   color: var(--accent);
@@ -720,6 +736,9 @@ html, body {
   display: grid;
   grid-template-columns: 1fr 1.4fr;
   gap: 10px;
+}
+.modal__actions--single {
+  grid-template-columns: 1fr;
 }
 
 /* ====== ROUTE PANEL ====== */
