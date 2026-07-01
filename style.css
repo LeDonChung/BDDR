@@ -30,6 +30,73 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ====== LOGIN ====== */
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: #0b1220;
+}
+.login-screen[hidden] { display: none; }
+.login-panel {
+  width: min(390px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  background: rgba(17, 26, 44, 0.98);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.login-panel__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.login-panel__brand h1 {
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 720;
+}
+.login-panel__brand p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.login-panel label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.login-panel input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  color: var(--text);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  font-size: 14px;
+}
+.login-panel input:focus {
+  border-color: rgba(79, 140, 255, 0.7);
+  background: rgba(255,255,255,0.1);
+}
+.login-panel input::placeholder { color: rgba(154,166,189,0.72); }
+.login-panel__error {
+  min-height: 18px;
+  color: #ff9a9a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* ====== APP HEADER ====== */
 .app-header {
   position: fixed;
@@ -174,6 +241,34 @@ html, body {
 }
 .icon-btn--primary:hover { background: #6aa0ff; }
 .icon-btn--active { background: var(--accent); color: #1a1a1a; border-color: transparent; }
+.account-btn {
+  min-width: 92px;
+  max-width: 148px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.account-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.account-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+.account-btn svg {
+  flex: 0 0 auto;
+  opacity: 0.78;
+}
 
 /* ====== MAP ====== */
 .map {
@@ -853,6 +948,16 @@ html, body {
   .app-title h1 { font-size: 14px; }
   .map { top: 52px; }
   .icon-btn { width: 34px; height: 34px; border-radius: 9px; }
+  .account-btn {
+    min-width: 0;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 9px;
+  }
+  .account-btn span { display: none; }
+  .account-btn svg { width: 18px; height: 18px; }
+  .login-panel { padding: 20px; }
 
   .route-panel {
     left: 0; right: 0; bottom: 0;

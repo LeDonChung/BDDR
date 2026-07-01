@@ -7,9 +7,11 @@
     "serve": "http-server -p 8000 -o",
     "start": "http-server -p 8000",
     "convert:kmz": "node data/convert-kmz-to-geojson.js data/BDDR.kmz data/BDDR.geojson",
-    "convert:dxf-labels": "node data/convert-dxf-labels-to-geojson.js",
+    "convert:dxf-labels": "node data/convert-dxf-labels-to-geojson.js data/BDDR Tong Final.dxf data/BDDR-labels.geojson",
     "convert:pmtiles": "powershell -ExecutionPolicy Bypass -File data/convert-geojson-to-pmtiles.ps1",
-    "convert:all": "npm run convert:kmz && npm run convert:dxf-labels && npm run convert:pmtiles"
+    "convert:all": "npm run convert:kmz && npm run convert:dxf-labels && npm run convert:pmtiles",
+    "convert:team": "powershell -ExecutionPolicy Bypass -File data/build-team.ps1",
+    "convert:teams": "powershell -ExecutionPolicy Bypass -File data/build-all-teams.ps1"
   },
   "keywords": [
     "kml",
