@@ -270,6 +270,55 @@ html, body {
   opacity: 0.78;
 }
 
+.follow-heading-btn {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  color: #fff;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.follow-heading-btn:hover {
+  background: rgba(255,255,255,0.24);
+  border-color: rgba(255,255,255,0.35);
+}
+.follow-heading-btn.is-active {
+  background: #1a73e8;
+  border-color: transparent;
+  color: #fff;
+}
+.follow-heading-btn:active { transform: scale(0.96); }
+
+.nav-drive__recenter-btn {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  color: #fff;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.nav-drive__recenter-btn:hover {
+  background: rgba(255,255,255,0.24);
+  border-color: rgba(255,255,255,0.35);
+}
+.nav-drive__recenter-btn:active { transform: scale(0.96); }
+
 /* ====== MAP ====== */
 .map {
   position: fixed;
@@ -741,6 +790,106 @@ html, body {
   grid-template-columns: 1fr;
 }
 
+/* ====== INFO MODAL ====== */
+.info-team-picker {
+  margin-bottom: 16px;
+}
+.info-team-picker__label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.info-team-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.info-team-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 8px;
+  color: var(--text);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  text-align: center;
+}
+.info-team-btn:hover {
+  background: rgba(79,140,255,0.16);
+  border-color: rgba(79,140,255,0.5);
+  color: #fff;
+}
+.info-team-btn.is-current {
+  background: rgba(255,216,77,0.12);
+  border-color: rgba(255,216,77,0.5);
+  color: var(--accent);
+}
+.info-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.info-loading.hidden { display: none; }
+.info-error {
+  padding: 16px 0;
+  color: var(--danger);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.info-error.hidden { display: none; }
+.info-content {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.info-content.hidden { display: none; }
+.info-content:empty { display: none; }
+.info-content__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.info-content__back:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+.info-content__back svg { flex-shrink: 0; }
+.info-content__team-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.spinner--sm {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+  flex-shrink: 0;
+}
+
 /* ====== ROUTE PANEL ====== */
 .route-panel {
   position: fixed;
@@ -1065,32 +1214,6 @@ html, body {
   cursor: pointer;
 }
 
-
-/* ====== ROTATE CONTROL (2-finger compass / map rotate) ====== */
-.leaflet-control-rotate {
-  border: none !important;
-  border-radius: 10px !important;
-  overflow: hidden;
-  box-shadow: var(--shadow) !important;
-  background: rgba(17, 26, 44, 0.95) !important;
-  margin: 12px !important;
-}
-.leaflet-control-rotate-toggle {
-  display: block !important;
-  width: 36px !important;
-  height: 36px !important;
-  line-height: 36px !important;
-  background: transparent !important;
-}
-.leaflet-control-rotate-toggle:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-}
-.leaflet-control-rotate-arrow {
-  filter: invert(1) opacity(0.92);
-}
-.is-driving .leaflet-control-rotate {
-  margin-top: 112px !important;
-}
 
 /* PMTiles canvas must stay transparent over raster basemap */
 .leaflet-pane canvas,
