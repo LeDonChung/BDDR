@@ -321,8 +321,192 @@ function logoutAndReload() {
   window.location.reload();
 }
 
+// ===== INFO MODAL =====
+function openInfoModal() {
+  const modal = $('infoModal');
+  if (!modal) return;
+  resetInfoModal();
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  setTimeout(() => {
+    const firstFocusable = modal.querySelector('button, [tabindex="0"]');
+    if (firstFocusable) firstFocusable.focus();
+  }, 60);
+}
+
+function closeInfoModal() {
+  const modal = $('infoModal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  resetInfoModal();
+}
+
+function resetInfoModal() {
+  const teamPicker = $('infoTeamPicker');
+  const content = $('infoContent');
+  const loading = $('infoLoading');
+  const error = $('infoError');
+  if (teamPicker) teamPicker.hidden = true;
+  if (content) { content.hidden = true; content.innerHTML = ''; }
+  if (loading) loading.classList.add('hidden');
+  if (error) { error.hidden = true; error.textContent = ''; }
+}
+
+function getAllowedTeams() {
+  if (!currentAuthUser) return [];
+  if (currentAuthUser === 'doankinhtecty75') {
+    // All known teams
+    return [
+      { folder: 'main',        name: 'Công ty (Toàn bộ)',   isMain: true },
+      { folder: 'doi01', name: 'Đội 1',  isMain: false },
+      { folder: 'doi02', name: 'Đội 2',  isMain: false },
+      { folder: 'doi03', name: 'Đội 3',  isMain: false },
+      { folder: 'doi04', name: 'Đội 4',  isMain: false },
+      { folder: 'doi05', name: 'Đội 5',  isMain: false },
+      { folder: 'doi06', name: 'Đội 6',  isMain: false },
+      { folder: 'doi07', name: 'Đội 7',  isMain: false },
+      { folder: 'doi08', name: 'Đội 8',  isMain: false },
+      { folder: 'doi09', name: 'Đội 9',  isMain: false },
+      { folder: 'doi10', name: 'Đội 10', isMain: false },
+      { folder: 'doi12', name: 'Đội 12', isMain: false },
+      { folder: 'doi13', name: 'Đội 13', isMain: false },
+      { folder: 'doi14', name: 'Đội 14', isMain: false },
+      { folder: 'doi15', name: 'Đội 15', isMain: false },
+      { folder: 'doi16', name: 'Đội 16', isMain: false },
+      { folder: 'doi17', name: 'Đội 17', isMain: false },
+      { folder: 'doi18', name: 'Đội 18', isMain: false },
+      { folder: 'doi19', name: 'Đội 19', isMain: false },
+    ];
+  }
+
+  // Regular team: can only view their own info
+  const match = currentAuthUser.match(/^cty75doi(\d{1,2})$/);
+  if (!match) return [];
+  const teamNum = String(Number(match[1])).padStart(2, '0');
+  const profile = resolveDataProfile(currentAuthUser);
+  const teamName = profile ? profile.displayName : 'Đội ' + Number(match[1]);
+  return [{ folder: 'doi' + teamNum, name: teamName, isMain: false }];
+}
+
+function renderInfoTeamPicker() {
+  const teams = getAllowedTeams();
+  const teamPicker = $('infoTeamPicker');
+  const teamList = $('infoTeamList');
+  const content = $('infoContent');
+  const loading = $('infoLoading');
+  const error = $('infoError');
+  if (!teamPicker || !teamList || !content || !loading || !error) return;
+
+  if (teams.length === 1) {
+    // Auto-load if only one team accessible
+    loadTeamInfo(teams[0].folder, teams[0].name, teams[0].isMain);
+    return;
+  }
+
+  // Multiple teams — show picker
+  loading.classList.add('hidden');
+  error.hidden = true;
+  content.hidden = true;
+  teamPicker.hidden = false;
+  teamList.innerHTML = '';
+
+  const currentFolder = currentDataProfile ? currentDataProfile.folder : null;
+
+  teams.forEach(team => {
+    const btn = document.createElement('button');
+    btn.className = 'info-team-btn' + (team.folder === currentFolder ? ' is-current' : '');
+    btn.textContent = team.name;
+    btn.setAttribute('aria-label', 'Xem thông tin ' + team.name);
+    btn.addEventListener('click', () => {
+      loadTeamInfo(team.folder, team.name, team.isMain);
+    });
+    teamList.appendChild(btn);
+  });
+}
+
+async function loadTeamInfo(folder, teamName, isMain) {
+  const teamPicker = $('infoTeamPicker');
+  const content = $('infoContent');
+  const loading = $('infoLoading');
+  const error = $('infoError');
+  if (!content || !loading || !error) return;
+
+  // Show loading, hide others
+  if (teamPicker) teamPicker.hidden = true;
+  content.hidden = true;
+  error.hidden = true;
+  loading.classList.remove('hidden');
+
+  try {
+    const infoUrl = 'data/' + folder + '/info.txt';
+    const resp = await fetch(infoUrl, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('Không tìm thấy file thông tin cho đơn vị này.');
+    const text = await resp.text();
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('File thông tin trống.');
+
+    loading.classList.add('hidden');
+    content.hidden = false;
+    content.innerHTML =
+      '<button class="info-content__back" id="infoBackBtn" type="button" aria-label="Quay lại chọn đội">' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>' +
+        'Chọn đội khác' +
+      '</button>' +
+      '<div class="info-content__team-name">' + escapeHtmlInfo(teamName) + '</div>' +
+      '<div class="info-content__body">' + escapeHtmlInfo(trimmed) + '</div>';
+
+    const backBtn = $('infoBackBtn');
+    if (backBtn) {
+      backBtn.addEventListener('click', () => {
+        renderInfoTeamPicker();
+      });
+    }
+  } catch (err) {
+    loading.classList.add('hidden');
+    error.hidden = false;
+    error.textContent = err.message || 'Không thể tải thông tin.';
+  }
+}
+
+function escapeHtmlInfo(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function initInfoModal() {
+  const infoBtn = $('infoBtn');
+  const closeBtn = $('infoModalCloseBtn');
+  const backdrop = document.querySelector('#infoModal .modal__backdrop');
+
+  if (infoBtn) {
+    infoBtn.addEventListener('click', () => {
+      openInfoModal();
+      renderInfoTeamPicker();
+    });
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeInfoModal);
+  }
+  if (backdrop) {
+    backdrop.addEventListener('click', closeInfoModal);
+  }
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const infoModal = $('infoModal');
+      if (infoModal && !infoModal.classList.contains('open')) return;
+      closeInfoModal();
+    }
+  });
+}
+
 async function bootstrapApp() {
   initLoginUI();
+  initInfoModal();
   setLoginBusy(true, 'Đang đọc danh sách đăng nhập...');
 
   try {
@@ -403,11 +587,7 @@ function initMap() {
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX,
     rotate: true,
     touchRotate: true,
-    bearing: initialBearing,
-    rotateControl: {
-      closeOnZeroBearing: false,
-      position: 'topleft'
-    }
+    bearing: initialBearing
   });
 
   currentBaseLayer = savedState && savedState.baseLayer === 'street' ? osmLayer : satelliteLayer;
@@ -2469,13 +2649,6 @@ async function locateUser(pan, options) {
 function onMapRotate() {
   // Update heading arrow immediately, compensating for map bearing (no lag).
   updateUserMarkerRotation(true);
-  // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tắt bám hướng để user tự do định hướng.
-  if (typeof programmaticBearing !== 'undefined' && !programmaticBearing) {
-    if (typeof followHeading !== 'undefined' && followHeading) {
-      followHeading = false;
-      if (typeof updateDriveHeadingStatus === 'function') updateDriveHeadingStatus();
-    }
-  }
   scheduleRotateTileRefresh();
   saveAppStateDebounced();
 }

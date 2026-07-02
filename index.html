@@ -44,6 +44,9 @@
             <div id="parcelSearchSuggestions" class="app-search__suggestions" hidden></div>
         </div>
         <div class="app-header__right">
+            <button id="infoBtn" class="icon-btn" title="Thông tin đơn vị" aria-label="Thông tin đơn vị">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </button>
             <button id="accountBtn" class="account-btn" type="button" title="Đổi đơn vị" aria-label="Đổi đơn vị">
                 <span id="accountLabel">Đơn vị</span>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5"/><path d="m21 3-7 7"/><path d="M8 21H3v-5"/><path d="m3 21 7-7"/></svg>
@@ -89,8 +92,8 @@
         </div>
 
         <div class="nav-drive__controls">
-            <button id="navDriveRecenterBtn" class="map-fab" title="Căn giữa vị trí" aria-label="Căn giữa vị trí">
-                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            <button id="navDriveRecenterBtn" class="nav-drive__recenter-btn" title="Về giữa" aria-label="Về giữa">
+                Về giữa
             </button>
         </div>
 
@@ -215,6 +218,30 @@
             </div>
         </div>
     </aside>
+
+    <!-- Info modal -->
+    <div id="infoModal" class="modal" aria-hidden="true">
+        <div class="modal__backdrop" data-modal-close></div>
+        <section class="modal__card" role="dialog" aria-modal="true" aria-labelledby="infoModalTitle">
+            <button id="infoModalCloseBtn" class="icon-btn modal__close" title="Đóng" aria-label="Đóng">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div class="modal__pin" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </div>
+            <h2 id="infoModalTitle">Thông tin đơn vị</h2>
+            <div id="infoTeamPicker" class="info-team-picker" hidden>
+                <p class="info-team-picker__label">Chọn đội để xem thông tin:</p>
+                <div id="infoTeamList" class="info-team-list"></div>
+            </div>
+            <div id="infoContent" class="info-content" hidden></div>
+            <div id="infoLoading" class="info-loading">
+                <span class="spinner spinner--sm" aria-hidden="true"></span>
+                <span>Đang tải thông tin…</span>
+            </div>
+            <div id="infoError" class="info-error" hidden></div>
+        </section>
+    </div>
 
     <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
