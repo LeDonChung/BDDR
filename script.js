@@ -2809,8 +2809,68 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
 
 // ===== BOOT =====
 document.addEventListener('DOMContentLoaded', () => {
+  initCompassDebugPanel();
   bootstrapApp();
 });
+
+// ===== COMPASS DEBUG PANEL =====
+let compassDebugPanelVisible = false;
+let compassDebugInterval = null;
+
+function initCompassDebugPanel() {
+  const debugBtn = document.getElementById('debugCompassBtn');
+  const panel = document.getElementById('compassDebugPanel');
+  const closeBtn = document.getElementById('compassDebugCloseBtn');
+  const permBtn = document.getElementById('cdRequestPermBtn');
+  const refreshBtn = document.getElementById('cdRefreshBtn');
+
+  if (!debugBtn || !panel) return;
+
+  // Show the debug button always (it's hidden by default in HTML)
+  debugBtn.hidden = false;
+  debugBtn.addEventListener('click', toggleCompassDebug);
+
+  if (closeBtn) closeBtn.addEventListener('click', hideCompassDebug);
+  if (permBtn) permBtn.addEventListener('click', async () => {
+    if (typeof requestDeviceHeadingFromDebug === 'function') {
+      await requestDeviceHeadingFromDebug(true);
+    }
+  });
+  if (refreshBtn) refreshBtn.addEventListener('click', refreshCompassDebug);
+}
+
+function toggleCompassDebug() {
+  const panel = document.getElementById('compassDebugPanel');
+  if (!panel) return;
+  compassDebugPanelVisible = !compassDebugPanelVisible;
+  panel.hidden = !compassDebugPanelVisible;
+  panel.setAttribute('aria-hidden', String(!compassDebugPanelVisible));
+  if (compassDebugPanelVisible) {
+    refreshCompassDebug();
+    if (!compassDebugInterval) {
+      compassDebugInterval = setInterval(refreshCompassDebug, 500);
+    }
+  }
+}
+
+function hideCompassDebug() {
+  compassDebugPanelVisible = false;
+  const panel = document.getElementById('compassDebugPanel');
+  if (panel) {
+    panel.hidden = true;
+    panel.setAttribute('aria-hidden', 'true');
+  }
+  if (compassDebugInterval) {
+    clearInterval(compassDebugInterval);
+    compassDebugInterval = null;
+  }
+}
+
+function refreshCompassDebug() {
+  if (typeof updateCompassDebugPanel === 'function') {
+    updateCompassDebugPanel();
+  }
+}
 
 
 

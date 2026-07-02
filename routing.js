@@ -18,6 +18,8 @@ let deviceHeadingRaw = null;
 let deviceOrientationActive = false;
 let lastHeadingSource = 'none';
 let markerRotationRafId = null;
+// Debug state shared with compass debug panel
+let compassDebugState = { webkitHeading: null, alpha: null, beta: null, gamma: null, absolute: null, reason: '', liveEvents: 0 };
 let wakeLock = null;
 let offRouteSince = null;
 let lastAccuracy = null;
@@ -947,19 +949,34 @@ function stopDeviceHeading() {
 }
 
 function onDeviceOrientation(event) {
+  // Capture raw event values for debug panel
+  compassDebugState.webkitHeading = event.webkitCompassHeading;
+  compassDebugState.alpha = event.alpha;
+  compassDebugState.beta = event.beta;
+  compassDebugState.gamma = event.gamma;
+  compassDebugState.absolute = event.absolute;
+  compassDebugState.liveEvents++;
   // iOS Safari: webkitCompassHeading is the true compass heading (clockwise from North).
   // Android/Chrome: use absolute alpha (heading = 360 - alpha).
   const compassHeading = Number(event.webkitCompassHeading);
   const alpha = Number(event.alpha);
   let heading = null;
+  let reason = '';
 
   if (Number.isFinite(compassHeading)) {
     heading = compassHeading;
+    reason = 'webkitCompassHeading';
   } else if (event.absolute !== false && Number.isFinite(alpha)) {
     heading = 360 - alpha;
+    reason = 'alpha (360-alpha)';
+  } else {
+    reason = 'NO_VALID_DATA: webkit=' + compassHeading + ' alpha=' + alpha + ' absolute=' + event.absolute;
   }
-
-  if (!Number.isFinite(heading)) return;
+  compassDebugState.reason = reason;
+  if (!Number.isFinite(heading)) {
+    compassDebugState.reason = reason;
+    return;
+  }
 
   // Only store the raw value here. Smoothing + rendering run on requestAnimationFrame
   // to avoid jitter (previously transform updated ~60x/s with a 0.18s CSS transition,
@@ -1527,3 +1544,81 @@ function estimateDurationMinutes(distanceMeters) {
 function escapeHtmlRoute(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// ===== COMPASS DEBUG HELPERS =====
+function getCompassDebugState() {
+  return {
+    webkitHeading: compassDebugState.webkitHeading,
+    alpha: compassDebugState.alpha,
+    beta: compassDebugState.beta,
+    gamma: compassDebugState.gamma,
+    absolute: compassDebugState.absolute,
+    reason: compassDebugState.reason,
+    liveEvents: compassDebugState.liveEvents,
+    deviceOrientationActive,
+    isSecureContext: window.isSecureContext,
+    raw: deviceHeadingRaw,
+    smooth: deviceHeading,
+    source: lastHeadingSource,
+    hasDeviceOrientation: 'DeviceOrientationEvent' in window,
+    hasRequestPermission: typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function',
+  };
+}
+
+function updateCompassDebugPanel() {
+  const s = getCompassDebugState();
+  const $ = id => document.getElementById(id);
+  const set = (id, val) => { const el = $(id); if (el) el.textContent = val !== undefined && val !== null ? String(val) : '—'; };
+  set('cdWebkit', s.webkitHeading !== undefined ? Number(s.webkitHeading).toFixed(1) : '—');
+  set('cdAlpha', s.alpha !== undefined && s.alpha !== null ? Number(s.alpha).toFixed(1) : '—');
+  set('cdBeta', s.beta !== undefined && s.beta !== null ? Number(s.beta).toFixed(1) : '—');
+  set('cdGamma', s.gamma !== undefined && s.gamma !== null ? Number(s.gamma).toFixed(1) : '—');
+  set('cdAbsolute', s.absolute !== undefined ? String(s.absolute) : '—');
+  set('cdHeading', s.raw !== null ? Number(s.raw).toFixed(1) + '°' : '—');
+  set('cdSource', s.reason || '—');
+  set('cdActive', String(s.deviceOrientationActive));
+  set('cdSecure', String(s.isSecureContext));
+  set('cdRaw', s.raw !== null ? Number(s.raw).toFixed(1) + '°' : '—');
+  set('cdSmooth', s.smooth !== null ? Number(s.smooth).toFixed(1) + '°' : '—');
+
+  const statusEl = $('cdStatus');
+  const hintEl = $('cdHint');
+  if (statusEl) {
+    let lines = [];
+    lines.push('Sự kiện: ' + s.liveEvents + ' lần');
+    if (!s.hasDeviceOrientation) {
+      lines.push('⚠ Browser không hỗ trợ DeviceOrientationEvent');
+    } else if (!s.isSecureContext) {
+      lines.push('⚠ Cần HTTPS (hiện tại: ' + (location.protocol) + ')');
+    } else if (!s.deviceOrientationActive) {
+      lines.push('⚠ Chưa bật la bàn — bấm "Yêu cầu quyền"');
+    } else if (s.liveEvents === 0) {
+      lines.push('⚠ Đang nghe nhưng KHÔNG có sự kiện nào bắn');
+    } else if (s.reason && s.reason.startsWith('NO_VALID')) {
+      lines.push('⚠ ' + s.reason);
+    } else if (s.raw !== null) {
+      lines.push('✅ La bàn hoạt động: ' + Number(s.raw).toFixed(1) + '°');
+    }
+    statusEl.textContent = lines.join('\n');
+    statusEl.style.color = lines.some(l => l.startsWith('⚠')) ? '#ff6b6b' : '#00c864';
+  }
+  if (hintEl) {
+    let hints = [];
+    if (!s.hasDeviceOrientation) {
+      hints.push('Trình duyệt không hỗ trợ la bàn.\nThử Chrome/Firefox/Safari mới nhất.');
+    } else if (!s.isSecureContext) {
+      hints.push('Cần mở bằng HTTPS (localhost được coi là secure).\nTrên điện thoại phải dùng https:// hoặc localhost.');
+    } else if (!s.deviceOrientationActive) {
+      hints.push('Bấm nút "Yêu cầu quyền" trong panel.\n(iOS Safari bắt buộc cần quyền.)');
+    } else if (s.liveEvents === 0) {
+      hints.push('Sensor không bắn sự kiện.\n- Thử xoay điện thoại mạnh\n- Đảm bảo không có app nào chặn cảm biến\n- Thử Chrome thay vì trình duyệt khác');
+    }
+    hintEl.textContent = hints.join('\n');
+  }
+}
+
+// Expose for script.js and global access (routing.js loads after script.js)
+window.updateCompassDebugPanel = updateCompassDebugPanel;
+window.getCompassDebugState = getCompassDebugState;
+window.requestDeviceHeadingFromDebug = requestDeviceHeading;
+window.compassDebugState = compassDebugState;

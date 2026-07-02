@@ -1205,3 +1205,76 @@ html, body {
 .route-choice-popup.leaflet-popup {
   z-index: 1200 !important;
 }
+
+/* ===== COMPASS DEBUG PANEL ===== */
+.compass-debug {
+  position: fixed;
+  bottom: 80px;
+  right: 12px;
+  width: 260px;
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px;
+  z-index: 9999;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  font-size: 11px;
+  font-family: monospace;
+  color: #e0e0e0;
+  overflow: hidden;
+}
+.compass-debug__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: #0f3460;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+}
+.compass-debug__body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.compass-debug__status {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.08);
+  font-size: 11px;
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+}
+.compass-debug__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.compass-debug__row--highlight {
+  background: rgba(0,200,100,0.15);
+  color: #00c864;
+  font-weight: 700;
+}
+.cd-label { color: #888; }
+.cd-value { color: #fff; font-weight: 600; }
+.compass-debug__row--highlight .cd-value { color: #00ff88; }
+.compass-debug__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.compass-debug__hint {
+  margin-top: 6px;
+  padding: 6px;
+  background: rgba(255,200,0,0.1);
+  border: 1px solid rgba(255,200,0,0.3);
+  border-radius: 6px;
+  color: #ffc800;
+  font-size: 10px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}

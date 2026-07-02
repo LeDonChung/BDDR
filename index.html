@@ -44,6 +44,9 @@
             <div id="parcelSearchSuggestions" class="app-search__suggestions" hidden></div>
         </div>
         <div class="app-header__right">
+            <button id="debugCompassBtn" class="icon-btn" title="Debug la bàn" aria-label="Debug la bàn" hidden>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </button>
             <button id="infoBtn" class="icon-btn" title="Thông tin đơn vị" aria-label="Thông tin đơn vị">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
             </button>
@@ -241,6 +244,68 @@
             </div>
             <div id="infoError" class="info-error" hidden></div>
         </section>
+    </div>
+
+    <!-- Debug compass panel -->
+    <div id="compassDebugPanel" class="compass-debug" aria-hidden="true" hidden>
+        <div class="compass-debug__header">
+            <span>Debug La Bàn</span>
+            <button id="compassDebugCloseBtn" class="icon-btn" title="Đóng" aria-label="Đóng debug">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="compass-debug__body">
+            <div class="compass-debug__status" id="cdStatus">—</div>
+            <div class="compass-debug__row">
+                <span class="cd-label">webkitCompassHeading</span>
+                <span class="cd-value" id="cdWebkit">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">alpha</span>
+                <span class="cd-value" id="cdAlpha">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">beta</span>
+                <span class="cd-value" id="cdBeta">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">gamma</span>
+                <span class="cd-value" id="cdGamma">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">absolute</span>
+                <span class="cd-value" id="cdAbsolute">—</span>
+            </div>
+            <div class="compass-debug__row compass-debug__row--highlight">
+                <span class="cd-label">heading cuối</span>
+                <span class="cd-value" id="cdHeading">—</span>
+            </div>
+            <div class="compass-debug__row compass-debug__row--highlight">
+                <span class="cd-label">source</span>
+                <span class="cd-value" id="cdSource">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">deviceOrientationActive</span>
+                <span class="cd-value" id="cdActive">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">isSecureContext</span>
+                <span class="cd-value" id="cdSecure">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">raw heading</span>
+                <span class="cd-value" id="cdRaw">—</span>
+            </div>
+            <div class="compass-debug__row">
+                <span class="cd-label">smooth heading</span>
+                <span class="cd-value" id="cdSmooth">—</span>
+            </div>
+            <div class="compass-debug__actions">
+                <button id="cdRequestPermBtn" class="btn btn--primary btn--sm">Yêu cầu quyền</button>
+                <button id="cdRefreshBtn" class="btn btn--ghost btn--sm">Refresh</button>
+            </div>
+            <div class="compass-debug__hint" id="cdHint"></div>
+        </div>
     </div>
 
     <!-- Scripts -->
