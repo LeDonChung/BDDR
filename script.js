@@ -2488,6 +2488,8 @@ function showSelectedLandmark(latlng) {
     interactive: false,
     zIndexOffset: 900
   }).addTo(map);
+
+  if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
 }
 
 function showRouteConfirmModal(destination) {
@@ -2667,6 +2669,18 @@ function scheduleRotateTileRefresh() {
 
 // Rotate the heading arrow in place (no marker rebuild) -> smooth + continuous.
 // When the map is rotated, the arrow compensates for bearing to point the true heading.
+function computeBearingDeg(fromLatLng, toLatLng) {
+  if (!fromLatLng || !toLatLng) return null;
+  const lat1 = fromLatLng.lat * Math.PI / 180;
+  const lat2 = toLatLng.lat * Math.PI / 180;
+  const dLon = (toLatLng.lng - fromLatLng.lng) * Math.PI / 180;
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) -
+            Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  const brng = Math.atan2(y, x) * 180 / Math.PI;
+  return (brng + 360) % 360;
+}
+
 function updateUserMarkerRotation(instant) {
   if (!userMarker) return;
   const el = userMarker.getElement();
@@ -2688,12 +2702,44 @@ function updateUserMarkerRotation(instant) {
   const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
     ? map.getBearing()
     : 0;
-  const target = (((currentUserHeading - bearing) % 360) + 360) % 360;
+
+  let angleToTarget = null;
+  if (selectedLandmarkMarker && currentUserLatLng) {
+    const dest = selectedLandmarkMarker.getLatLng();
+    angleToTarget = computeBearingDeg(currentUserLatLng, dest);
+  }
+
+  const hasHeading = Number.isFinite(currentUserHeading);
+  const hasTarget = Number.isFinite(angleToTarget);
+
+  if (hasTarget) {
+    dot.classList.add('user-marker--heading');
+    const target = (((angleToTarget - bearing) % 360) + 360) % 360;
+    if (appliedMarkerAngle === null) {
+      appliedMarkerAngle = target;
+    } else {
+      let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
+      appliedMarkerAngle += delta;
+    }
+    wrap.style.transition = instant ? 'none' : 'transform 0.18s ease-out';
+    wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
+    return;
+  }
+
+  if (!hasHeading) {
+    wrap.style.transition = '';
+    wrap.style.transform = '';
+    appliedMarkerAngle = null;
+    return;
+  }
+
+  const target2 = (((currentUserHeading - bearing) % 360) + 360) % 360;
+  dot.classList.toggle('user-marker--heading', hasHeading);
 
   if (appliedMarkerAngle === null) {
-    appliedMarkerAngle = target;
+    appliedMarkerAngle = target2;
   } else {
-    let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
+    let delta = ((target2 - appliedMarkerAngle) % 360 + 540) % 360 - 180;
     appliedMarkerAngle += delta;
   }
 
