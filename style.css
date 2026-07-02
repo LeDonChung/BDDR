@@ -270,55 +270,6 @@ html, body {
   opacity: 0.78;
 }
 
-.follow-heading-btn {
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 14px;
-  color: #fff;
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-  white-space: nowrap;
-}
-.follow-heading-btn:hover {
-  background: rgba(255,255,255,0.24);
-  border-color: rgba(255,255,255,0.35);
-}
-.follow-heading-btn.is-active {
-  background: #1a73e8;
-  border-color: transparent;
-  color: #fff;
-}
-.follow-heading-btn:active { transform: scale(0.96); }
-
-.nav-drive__recenter-btn {
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 14px;
-  color: #fff;
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-  white-space: nowrap;
-}
-.nav-drive__recenter-btn:hover {
-  background: rgba(255,255,255,0.24);
-  border-color: rgba(255,255,255,0.35);
-}
-.nav-drive__recenter-btn:active { transform: scale(0.96); }
-
 /* ====== MAP ====== */
 .map {
   position: fixed;
@@ -1214,6 +1165,32 @@ html, body {
   cursor: pointer;
 }
 
+
+/* ====== ROTATE CONTROL (2-finger compass / map rotate) ====== */
+.leaflet-control-rotate {
+  border: none !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: var(--shadow) !important;
+  background: rgba(17, 26, 44, 0.95) !important;
+  margin: 12px !important;
+}
+.leaflet-control-rotate-toggle {
+  display: block !important;
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  background: transparent !important;
+}
+.leaflet-control-rotate-toggle:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+.leaflet-control-rotate-arrow {
+  filter: invert(1) opacity(0.92);
+}
+.is-driving .leaflet-control-rotate {
+  margin-top: 112px !important;
+}
 
 /* PMTiles canvas must stay transparent over raster basemap */
 .leaflet-pane canvas,

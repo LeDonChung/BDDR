@@ -587,7 +587,11 @@ function initMap() {
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX,
     rotate: true,
     touchRotate: true,
-    bearing: initialBearing
+    bearing: initialBearing,
+    rotateControl: {
+      closeOnZeroBearing: false,
+      position: 'topleft'
+    }
   });
 
   currentBaseLayer = savedState && savedState.baseLayer === 'street' ? osmLayer : satelliteLayer;
@@ -2649,6 +2653,13 @@ async function locateUser(pan, options) {
 function onMapRotate() {
   // Update heading arrow immediately, compensating for map bearing (no lag).
   updateUserMarkerRotation(true);
+  // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tắt bám hướng để user tự do định hướng.
+  if (typeof programmaticBearing !== 'undefined' && !programmaticBearing) {
+    if (typeof followHeading !== 'undefined' && followHeading) {
+      followHeading = false;
+      if (typeof updateDriveHeadingStatus === 'function') updateDriveHeadingStatus();
+    }
+  }
   scheduleRotateTileRefresh();
   saveAppStateDebounced();
 }
