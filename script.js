@@ -3,6 +3,8 @@ let map;
 let kmlLayer = null;
 let userMarker = null;
 let userAccuracyCircle = null;
+let currentUserHeading = null;
+let appliedMarkerAngle = null;
 let currentUserLatLng = null;
 let rotateTileRefreshTimer = null;
 let selectedLandmarkMarker = null;
@@ -2673,12 +2675,42 @@ function updateUserMarkerRotation(instant) {
   const dot = el.querySelector('.user-marker');
   if (!wrap || !dot) return;
 
-  dot.classList.remove('user-marker--heading');
+  const hasHeading = Number.isFinite(currentUserHeading);
+  dot.classList.toggle('user-marker--heading', hasHeading);
+
+  if (!hasHeading) {
+    wrap.style.transition = '';
+    wrap.style.transform = '';
+    appliedMarkerAngle = null;
+    return;
+  }
+
+  const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
+    ? map.getBearing()
+    : 0;
+  const target = (((bearing - currentUserHeading) % 360) + 360) % 360;
+
+  if (appliedMarkerAngle === null) {
+    appliedMarkerAngle = target;
+  } else {
+    let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
+    appliedMarkerAngle += delta;
+  }
+
   wrap.style.transition = instant ? 'none' : 'transform 0.18s ease-out';
-  wrap.style.transform = 'none';
+  wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
 }
 function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
   currentUserLatLng = L.latLng(latlng[0], latlng[1]);
+
+  if (typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive
+      && Number.isFinite(currentUserHeading)) {
+    // giữ nguyên currentUserHeading từ la bàn
+  } else if (Number.isFinite(heading)) {
+    currentUserHeading = heading;
+  } else {
+    currentUserHeading = null;
+  }
 
   if (userMarker) {
     // During navigation with follow on, the smooth rAF follow loop owns the
