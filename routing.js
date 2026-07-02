@@ -987,7 +987,10 @@ function headingFrame() {
     deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
   }
 
-  currentUserHeading = deviceHeading;
+  // Arrow follows the raw compass value for instant feedback (like the OS compass
+  // app). The smoothed value above is still used to feed nav bearing so the map
+  // doesn't snap when the device jitters.
+  currentUserHeading = Number.isFinite(deviceHeadingRaw) ? deviceHeadingRaw : deviceHeading;
   if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
   if (isNavigating && followHeading) setNavBearingTarget(deviceHeading);
   throttledDriveHeadingStatus();
