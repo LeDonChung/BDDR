@@ -1068,14 +1068,13 @@ html, body {
   .map { top: 52px; }
   .icon-btn { width: 34px; height: 34px; border-radius: 9px; }
   .account-btn {
-    min-width: 0;
-    width: 34px;
+    min-width: 80px;
+    max-width: 120px;
     height: 34px;
-    padding: 0;
+    padding: 0 8px;
     border-radius: 9px;
   }
-  .account-btn span { display: none; }
-  .account-btn svg { width: 18px; height: 18px; }
+  .account-btn span { font-size: 12px; font-weight: 700; }
   .login-panel { padding: 20px; }
 
   .route-panel {
@@ -1223,4 +1222,15 @@ html, body {
 }
 .compass-mode-btn--headingup .compass-mode-icon {
   transform: rotate(180deg);
+}
+
+/* ===== COMPASS FLIP BUTTON ===== */
+.icon-btn--flip.map-fab--active,
+.icon-btn--flip.icon-btn--active {
+  background: #ff8800;
+  color: #fff;
+}
+.map-fab--compass-flip.map-fab--active {
+  background: #ff8800;
+  color: #fff;
 }

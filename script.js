@@ -257,6 +257,13 @@ function hideLoginScreen() {
   screen.setAttribute('aria-hidden', 'true');
 }
 
+function formatLoginDisplayName(code) {
+  if (code === 'doankinhtecty75') return 'Công ty 75';
+  const match = code.match(/^cty75doi(\d{1,2})$/);
+  if (match) return 'Đội ' + Number(match[1]);
+  return code;
+}
+
 function applyDataProfileToUI() {
   if (!currentDataProfile) return;
 
@@ -264,12 +271,12 @@ function applyDataProfileToUI() {
   if (subtitle) subtitle.textContent = currentDataProfile.subtitle;
 
   const accountLabel = $('accountLabel');
-  if (accountLabel) accountLabel.textContent = currentDataProfile.shortLabel;
+  if (accountLabel) accountLabel.textContent = formatLoginDisplayName(currentAuthUser);
 
   const accountBtn = $('accountBtn');
   if (accountBtn) {
-    accountBtn.title = 'Đổi đơn vị (' + currentDataProfile.displayName + ')';
-    accountBtn.setAttribute('aria-label', 'Đổi đơn vị');
+    accountBtn.title = 'Đăng xuất (' + formatLoginDisplayName(currentAuthUser) + ')';
+    accountBtn.setAttribute('aria-label', 'Đăng xuất');
   }
 }
 
@@ -624,9 +631,6 @@ function initMap() {
   map.on('baselayerchange', onBaseLayerChange);
   map.on('click', onMapBackgroundClick);
   map.on('rotate', onMapRotate);
-
-  $('locateBtn').addEventListener('click', () => locateUser(true, { userInitiated: true }));
-  $('routeBtn').addEventListener('click', promptRoutePick);
 
   initRouting();
   initPermissionModal();
@@ -2855,8 +2859,44 @@ function bindCompassModeButtons() {
       updateCompassModeButton();
     });
   });
+
+  // Compass-flip buttons: reverse direction when device reports opposite heading.
+  const flipButtons = [
+    document.getElementById('compassFlipBtn'),
+    document.getElementById('navDriveCompassFlipBtn')
+  ].filter(Boolean);
+  flipButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (typeof window.toggleCompassFlip !== 'function') return;
+      const flipped = window.toggleCompassFlip();
+      updateCompassFlipButton(flipped);
+      if (typeof showToast === 'function') {
+        showToast(flipped ? 'Đã đảo chiều la bàn' : 'Đã trở lại chiều mặc định');
+      }
+    });
+  });
+  if (typeof window.isCompassFlipped === 'function') {
+    updateCompassFlipButton(window.isCompassFlipped());
+  }
   updateCompassModeButton();
 }
+
+function updateCompassFlipButton(flipped) {
+  const buttons = [
+    document.getElementById('compassFlipBtn'),
+    document.getElementById('navDriveCompassFlipBtn')
+  ].filter(Boolean);
+  buttons.forEach(btn => {
+    btn.classList.toggle('map-fab--active', !!flipped);
+    btn.classList.toggle('icon-btn--active', !!flipped);
+    btn.title = flipped
+      ? 'La bàn đang đảo chiều — bấm để trở lại mặc định'
+      : 'Đảo chiều la bàn (khi xoay điện thoại mà mũi tên quay ngược)';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', String(!!flipped));
+  });
+}
+window.updateCompassFlipButton = updateCompassFlipButton;
 window.updateCompassModeButton = updateCompassModeButton;
 
 

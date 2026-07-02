@@ -27,6 +27,10 @@ let followHeading = false;
 // Compass mode for the map ('northup' = Bắc trên đầu, map đứng; 'headingup' = bản đồ xoay theo hướng).
 // Heading-up is the default during navigation, north-up is the default otherwise.
 let compassMode = 'headingup';
+// Flip the compass when an OEM/Android device reports the opposite direction.
+// Toggle at runtime: localStorage.bddr_compass_flip = "1" / "0", or via ?flip in URL.
+let compassFlip = false;
+let compassFlipRead = false;
 let navBearingTarget = null;
 let navBearingCurrent = 0;
 let navBearingRafId = null;
@@ -957,18 +961,40 @@ function stopDeviceHeading() {
 
 function onDeviceOrientation(event) {
   // iOS Safari: webkitCompassHeading is the true compass heading (clockwise from North).
-  // Android/Chrome: use absolute alpha (heading = 360 - alpha).
+  // Android Chrome: use deviceorientationabsolute (e.absolute=true) and compute heading
+  // from alpha/beta/gamma so it stays correct when the phone is held vertically.
   const compassHeading = Number(event.webkitCompassHeading);
   const alpha = Number(event.alpha);
+  const beta = Number(event.beta);
+  const gamma = Number(event.gamma);
   let heading = null;
 
   if (Number.isFinite(compassHeading)) {
     heading = compassHeading;
-  } else if (event.absolute !== false && Number.isFinite(alpha)) {
+  } else if (event.absolute === true && Number.isFinite(alpha)) {
+    // Tilt-compensated heading for Android.
+    // When phone is held vertical (beta ~90) the raw alpha is wrong; the spec
+    // formula adds a beta*gamma/90 correction. Source: W3C deviceorientation spec.
+    let h;
+    if (Number.isFinite(beta) && Number.isFinite(gamma)) {
+      h = -(alpha + beta * gamma / 90);
+    } else {
+      h = -alpha;
+    }
+    // Normalize to [0,360)
+    h = ((h % 360) + 360) % 360;
+    heading = h;
+  } else if (Number.isFinite(alpha)) {
+    // Fallback for older browsers without absolute orientation: assume phone flat,
+    // which is the only case where alpha equals heading on Android.
     heading = 360 - alpha;
   }
 
   if (!Number.isFinite(heading)) return;
+
+  // Optional flip when the user reports the compass pointing the wrong way
+  // (some Android devices / OEM skins report opposite direction).
+  if (compassFlip) heading = ((360 - heading) % 360 + 360) % 360;
 
   // Only store the raw value here. Smoothing + rendering run on requestAnimationFrame
   // to avoid jitter (previously transform updated ~60x/s with a 0.18s CSS transition,
@@ -994,6 +1020,21 @@ function headingFrame() {
   } else {
     const delta = ((deviceHeadingRaw - deviceHeading) % 360 + 540) % 360 - 180;
     deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
+  }
+
+  // Read flip flag from URL/localStorage on first run; cheap check.
+  if (!compassFlipRead) {
+    compassFlipRead = true;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlFlip = params.get('flip');
+      if (urlFlip !== null) {
+        compassFlip = urlFlip === '1' || urlFlip === 'true';
+      } else {
+        const stored = localStorage.getItem('bddr_compass_flip');
+        compassFlip = stored === '1' || stored === 'true';
+      }
+    } catch (e) { /* ignore */ }
   }
 
   // Mode behaviour:
@@ -1053,8 +1094,16 @@ function setCompassMode(mode) {
 }
 
 function getCompassMode() { return compassMode; }
+function toggleCompassFlip() {
+  compassFlip = !compassFlip;
+  try { localStorage.setItem('bddr_compass_flip', compassFlip ? '1' : '0'); } catch (e) { /* ignore */ }
+  return compassFlip;
+}
+function isCompassFlipped() { return compassFlip; }
 window.setCompassMode = setCompassMode;
 window.getCompassMode = getCompassMode;
+window.toggleCompassFlip = toggleCompassFlip;
+window.isCompassFlipped = isCompassFlipped;
 
 // ===== AUTO-ROTATE MAP TO HEADING DURING NAVIGATION =====
 function setNavBearingTarget(heading) {
