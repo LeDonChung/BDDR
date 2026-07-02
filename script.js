@@ -3,9 +3,7 @@ let map;
 let kmlLayer = null;
 let userMarker = null;
 let userAccuracyCircle = null;
-let currentUserHeading = null;
 let currentUserLatLng = null;
-let appliedMarkerAngle = null;
 let rotateTileRefreshTimer = null;
 let selectedLandmarkMarker = null;
 let lastFeature = null;
@@ -2675,44 +2673,12 @@ function updateUserMarkerRotation(instant) {
   const dot = el.querySelector('.user-marker');
   if (!wrap || !dot) return;
 
-  const hasHeading = Number.isFinite(currentUserHeading);
-  dot.classList.toggle('user-marker--heading', hasHeading);
-
-  if (!hasHeading) {
-    wrap.style.transition = '';
-    wrap.style.transform = '';
-    appliedMarkerAngle = null;
-    return;
-  }
-
-  const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
-    ? map.getBearing()
-    : 0;
-  const target = (((bearing - currentUserHeading) % 360) + 360) % 360;
-
-  if (appliedMarkerAngle === null) {
-    appliedMarkerAngle = target;
-  } else {
-    let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
-    appliedMarkerAngle += delta;
-  }
-
+  dot.classList.remove('user-marker--heading');
   wrap.style.transition = instant ? 'none' : 'transform 0.18s ease-out';
-  wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
+  wrap.style.transform = 'none';
 }
 function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
   currentUserLatLng = L.latLng(latlng[0], latlng[1]);
-
-  // Ưu tiên la bàn thiết bị khi đã bật: mũi tên xoay mượt và chính xác hơn GPS.
-  // GPS heading chỉ dùng khi chưa có la bàn (fallback cho thiết bị không có).
-  if (typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive
-      && Number.isFinite(currentUserHeading)) {
-    // giữ nguyên currentUserHeading đang được cập nhật bởi compass loop
-  } else if (Number.isFinite(heading)) {
-    currentUserHeading = heading;
-  } else {
-    currentUserHeading = null;
-  }
 
   if (userMarker) {
     // During navigation with follow on, the smooth rAF follow loop owns the

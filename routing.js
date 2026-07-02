@@ -987,8 +987,6 @@ function headingFrame() {
     deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
   }
 
-  currentUserHeading = deviceHeading;
-  if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
   if (isNavigating && followHeading) setNavBearingTarget(deviceHeading);
   throttledDriveHeadingStatus();
 
