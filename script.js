@@ -6,6 +6,7 @@ let userAccuracyCircle = null;
 let currentUserHeading = null;
 let currentUserLatLng = null;
 let appliedMarkerAngle = null;
+let appliedMarkerAngleBearing = 0;
 let rotateTileRefreshTimer = null;
 let selectedLandmarkMarker = null;
 let lastFeature = null;
@@ -2693,6 +2694,7 @@ function updateUserMarkerRotation(instant) {
     wrap.style.transition = '';
     wrap.style.transform = '';
     appliedMarkerAngle = null;
+    appliedMarkerAngleBearing = 0;
     return;
   }
 
@@ -2704,8 +2706,21 @@ function updateUserMarkerRotation(instant) {
   if (appliedMarkerAngle === null) {
     appliedMarkerAngle = target;
   } else {
-    let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
-    appliedMarkerAngle += delta;
+    // Detect discontinuous bearing changes (e.g. map.setBearing(0) on nav exit,
+    // or navBearingFrame snapping navBearingCurrent to navBearingTarget).
+    // In those cases, snap the marker angle immediately to avoid a slow
+    // smooth-leap across 180+ degrees.
+    const bearingDelta = ((bearing - (appliedMarkerAngleBearing || 0)) % 360 + 540) % 360 - 180;
+    appliedMarkerAngleBearing = bearing;
+    if (Math.abs(bearingDelta) > 90) {
+      // Bearing jumped discontinuously — snap marker angle, no animation.
+      appliedMarkerAngle = target;
+      instant = true;
+    } else {
+      // Smooth lerp toward target.
+      let delta = ((target - appliedMarkerAngle) % 360 + 540) % 360 - 180;
+      appliedMarkerAngle += delta;
+    }
   }
 
   wrap.style.transition = instant ? 'none' : 'transform 0.18s ease-out';
