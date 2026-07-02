@@ -2654,11 +2654,11 @@ async function locateUser(pan, options) {
 function onMapRotate() {
   // Update heading arrow immediately, compensating for map bearing (no lag).
   updateUserMarkerRotation(true);
-  // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tắt bám hướng để user tự do định hướng.
+  // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tự chuyển sang chế độ "Bắc trên đầu"
+  // để map giữ góc xoay user chọn và mũi tên la bàn ăn theo la bàn thiết bị.
   if (typeof programmaticBearing !== 'undefined' && !programmaticBearing) {
-    if (typeof followHeading !== 'undefined' && followHeading) {
-      followHeading = false;
-      if (typeof updateDriveHeadingStatus === 'function') updateDriveHeadingStatus();
+    if (typeof setCompassMode === 'function' && getCompassMode && getCompassMode() !== 'northup') {
+      setCompassMode('northup');
     }
   }
   scheduleRotateTileRefresh();
@@ -2678,7 +2678,9 @@ function scheduleRotateTileRefresh() {
 }
 
 // Rotate the heading arrow in place (no marker rebuild) -> smooth + continuous.
-// When the map is rotated, the arrow compensates for bearing to point the true heading.
+// Compass modes (Google Maps style):
+//   - northup   : arrow = currentUserHeading - bearing   (map upright, arrow turns)
+//   - headingup : arrow angle = 0 always (map rotates so arrow points up)
 function updateUserMarkerRotation(instant) {
   if (!userMarker) return;
   const el = userMarker.getElement();
@@ -2687,6 +2689,11 @@ function updateUserMarkerRotation(instant) {
   const dot = el.querySelector('.user-marker');
   if (!wrap || !dot) return;
 
+  const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
+    ? map.getBearing()
+    : 0;
+
+  const mode = (typeof compassMode !== 'undefined') ? compassMode : 'headingup';
   const hasHeading = Number.isFinite(currentUserHeading);
   dot.classList.toggle('user-marker--heading', hasHeading);
 
@@ -2698,10 +2705,11 @@ function updateUserMarkerRotation(instant) {
     return;
   }
 
-  const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
-    ? map.getBearing()
+  // In heading-up mode the map rotates so the arrow visually points up,
+  // so its DOM rotation is always 0. In north-up mode the arrow shows real heading.
+  const target = (mode === 'northup')
+    ? (((currentUserHeading - bearing) % 360) + 360) % 360
     : 0;
-  const target = (((currentUserHeading - bearing) % 360) + 360) % 360;
 
   if (appliedMarkerAngle === null) {
     appliedMarkerAngle = target;
@@ -2809,68 +2817,47 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
 
 // ===== BOOT =====
 document.addEventListener('DOMContentLoaded', () => {
-  initCompassDebugPanel();
+  bindCompassModeButtons();
   bootstrapApp();
 });
 
-// ===== COMPASS DEBUG PANEL =====
-let compassDebugPanelVisible = false;
-let compassDebugInterval = null;
-
-function initCompassDebugPanel() {
-  const debugBtn = document.getElementById('debugCompassBtn');
-  const panel = document.getElementById('compassDebugPanel');
-  const closeBtn = document.getElementById('compassDebugCloseBtn');
-  const permBtn = document.getElementById('cdRequestPermBtn');
-  const refreshBtn = document.getElementById('cdRefreshBtn');
-
-  if (!debugBtn || !panel) return;
-
-  // Show the debug button always (it's hidden by default in HTML)
-  debugBtn.hidden = false;
-  debugBtn.addEventListener('click', toggleCompassDebug);
-
-  if (closeBtn) closeBtn.addEventListener('click', hideCompassDebug);
-  if (permBtn) permBtn.addEventListener('click', async () => {
-    if (typeof requestDeviceHeadingFromDebug === 'function') {
-      await requestDeviceHeadingFromDebug(true);
-    }
+// ===== COMPASS MODE BUTTONS (Google Maps style toggle) =====
+function updateCompassModeButton() {
+  const mode = (typeof window.getCompassMode === 'function') ? window.getCompassMode() : 'headingup';
+  const btns = [
+    document.getElementById('compassModeBtn'),
+    document.getElementById('navDriveCompassModeBtn')
+  ].filter(Boolean);
+  btns.forEach(btn => {
+    btn.classList.toggle('map-fab--active', mode === 'headingup');
+    btn.classList.toggle('icon-btn--active', mode === 'headingup');
+    btn.classList.toggle('compass-mode-btn--northup', mode === 'northup');
+    btn.classList.toggle('compass-mode-btn--headingup', mode === 'headingup');
+    btn.title = mode === 'northup'
+      ? 'Đang bám Bắc — bấm để chuyển sang bám hướng'
+      : 'Đang bám hướng — bấm để chuyển sang bám Bắc';
+    btn.setAttribute('aria-pressed', String(mode === 'headingup'));
+    btn.setAttribute('aria-label', btn.title);
   });
-  if (refreshBtn) refreshBtn.addEventListener('click', refreshCompassDebug);
 }
 
-function toggleCompassDebug() {
-  const panel = document.getElementById('compassDebugPanel');
-  if (!panel) return;
-  compassDebugPanelVisible = !compassDebugPanelVisible;
-  panel.hidden = !compassDebugPanelVisible;
-  panel.setAttribute('aria-hidden', String(!compassDebugPanelVisible));
-  if (compassDebugPanelVisible) {
-    refreshCompassDebug();
-    if (!compassDebugInterval) {
-      compassDebugInterval = setInterval(refreshCompassDebug, 500);
-    }
-  }
+function bindCompassModeButtons() {
+  const buttons = [
+    document.getElementById('compassModeBtn'),
+    document.getElementById('navDriveCompassModeBtn')
+  ].filter(Boolean);
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (typeof window.setCompassMode !== 'function') return;
+      const current = window.getCompassMode();
+      const next = (current === 'headingup') ? 'northup' : 'headingup';
+      window.setCompassMode(next);
+      updateCompassModeButton();
+    });
+  });
+  updateCompassModeButton();
 }
-
-function hideCompassDebug() {
-  compassDebugPanelVisible = false;
-  const panel = document.getElementById('compassDebugPanel');
-  if (panel) {
-    panel.hidden = true;
-    panel.setAttribute('aria-hidden', 'true');
-  }
-  if (compassDebugInterval) {
-    clearInterval(compassDebugInterval);
-    compassDebugInterval = null;
-  }
-}
-
-function refreshCompassDebug() {
-  if (typeof updateCompassDebugPanel === 'function') {
-    updateCompassDebugPanel();
-  }
-}
+window.updateCompassModeButton = updateCompassModeButton;
 
 
 

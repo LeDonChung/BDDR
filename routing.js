@@ -18,13 +18,15 @@ let deviceHeadingRaw = null;
 let deviceOrientationActive = false;
 let lastHeadingSource = 'none';
 let markerRotationRafId = null;
-// Debug state shared with compass debug panel
-let compassDebugState = { webkitHeading: null, alpha: null, beta: null, gamma: null, absolute: null, reason: '', liveEvents: 0 };
+// Debug state shared with compass debug panel (removed - feature retired)
 let wakeLock = null;
 let offRouteSince = null;
 let lastAccuracy = null;
 let pendingDirectRoute = false;
 let followHeading = false;
+// Compass mode for the map ('northup' = Bắc trên đầu, map đứng; 'headingup' = bản đồ xoay theo hướng).
+// Heading-up is the default during navigation, north-up is the default otherwise.
+let compassMode = 'headingup';
 let navBearingTarget = null;
 let navBearingCurrent = 0;
 let navBearingRafId = null;
@@ -635,6 +637,10 @@ async function startNavigation() {
   updateNavStatus('Đang bắt tín hiệu GPS...');
   updateDriveHeadingStatus();
 
+  // Heading-up: map rotates to face the user's direction.
+  // User can switch to north-up via the compass-mode button any time.
+  if (typeof setCompassMode === 'function') setCompassMode('headingup');
+
   // Begin smooth camera follow from the current view (glides to the first GPS fix),
   // so the map tracks the user with no per-fix animation lag.
   startPoint = latlng;
@@ -671,7 +677,8 @@ function stopNavigation(arrived) {
   setNavigationDriveMode(false);
   updateNavigationButtons();
   updateFollowControls();
-  // Khi thoát dẫn đường, trả bản đồ về hướng Bắc.
+  // Khi thoát dẫn đường, trả bản đồ về chế độ Bắc trên đầu (Bắc lên trên, mũi tên ăn la bàn).
+  if (typeof setCompassMode === 'function') setCompassMode('northup');
   if (map && typeof map.setBearing === 'function') {
     programmaticBearing = true;
     map.setBearing(0);
@@ -949,34 +956,19 @@ function stopDeviceHeading() {
 }
 
 function onDeviceOrientation(event) {
-  // Capture raw event values for debug panel
-  compassDebugState.webkitHeading = event.webkitCompassHeading;
-  compassDebugState.alpha = event.alpha;
-  compassDebugState.beta = event.beta;
-  compassDebugState.gamma = event.gamma;
-  compassDebugState.absolute = event.absolute;
-  compassDebugState.liveEvents++;
   // iOS Safari: webkitCompassHeading is the true compass heading (clockwise from North).
   // Android/Chrome: use absolute alpha (heading = 360 - alpha).
   const compassHeading = Number(event.webkitCompassHeading);
   const alpha = Number(event.alpha);
   let heading = null;
-  let reason = '';
 
   if (Number.isFinite(compassHeading)) {
     heading = compassHeading;
-    reason = 'webkitCompassHeading';
   } else if (event.absolute !== false && Number.isFinite(alpha)) {
     heading = 360 - alpha;
-    reason = 'alpha (360-alpha)';
-  } else {
-    reason = 'NO_VALID_DATA: webkit=' + compassHeading + ' alpha=' + alpha + ' absolute=' + event.absolute;
   }
-  compassDebugState.reason = reason;
-  if (!Number.isFinite(heading)) {
-    compassDebugState.reason = reason;
-    return;
-  }
+
+  if (!Number.isFinite(heading)) return;
 
   // Only store the raw value here. Smoothing + rendering run on requestAnimationFrame
   // to avoid jitter (previously transform updated ~60x/s with a 0.18s CSS transition,
@@ -1004,12 +996,18 @@ function headingFrame() {
     deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
   }
 
-  // Arrow follows the raw compass value for instant feedback (like the OS compass
-  // app). The smoothed value above is still used to feed nav bearing so the map
-  // doesn't snap when the device jitters.
-  currentUserHeading = Number.isFinite(deviceHeadingRaw) ? deviceHeadingRaw : deviceHeading;
+  // Mode behaviour:
+  //   - northup: arrow always uses the raw compass value for instant feedback;
+  //     map stays at bearing=0 (no setBearing here, no lag).
+  //   - headingup: feed smoothed heading to navBearing target so the map rotates
+  //     smoothly under the dot; arrow is rendered at top (target = -bearing).
+  if (compassMode === 'northup') {
+    currentUserHeading = Number.isFinite(deviceHeadingRaw) ? deviceHeadingRaw : deviceHeading;
+  } else {
+    currentUserHeading = Number.isFinite(deviceHeadingRaw) ? deviceHeadingRaw : deviceHeading;
+  }
   if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
-  if (isNavigating && followHeading) setNavBearingTarget(deviceHeading);
+  if (isNavigating && followHeading && compassMode === 'headingup') setNavBearingTarget(deviceHeading);
   throttledDriveHeadingStatus();
 
   // Keep smoothing until converged to the raw value.
@@ -1022,6 +1020,41 @@ function throttledDriveHeadingStatus() {
   updateDriveHeadingStatus();
   driveHeadingStatusTimer = setTimeout(() => { driveHeadingStatusTimer = null; }, 250);
 }
+
+// ===== COMPASS MODE (Google Maps style: North-up vs Heading-up) =====
+// Public API: setCompassMode(mode)  - mode = 'northup' or 'headingup'
+function setCompassMode(mode) {
+  const next = (mode === 'northup') ? 'northup' : 'headingup';
+  if (compassMode === next) return;
+  compassMode = next;
+  if (!map || typeof map.setBearing !== 'function') {
+    updateCompassModeButton();
+    return;
+  }
+  programmaticBearing = true;
+  if (next === 'northup') {
+    // Map stays put (bearing = 0). The arrow on the user marker compensates for heading.
+    map.setBearing(0);
+  } else {
+    // Heading-up: rotate map toward current heading so the arrow points up.
+    if (Number.isFinite(deviceHeading)) {
+      navBearingTarget = deviceHeading;
+      navBearingCurrent = ((navBearingTarget % 360) + 360) % 360;
+      map.setBearing(navBearingCurrent);
+      startNavBearingLoop();
+    } else {
+      map.setBearing(0);
+    }
+  }
+  programmaticBearing = false;
+  if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
+  if (typeof updateCompassModeButton === 'function') updateCompassModeButton();
+  if (typeof saveAppStateDebounced === 'function') saveAppStateDebounced();
+}
+
+function getCompassMode() { return compassMode; }
+window.setCompassMode = setCompassMode;
+window.getCompassMode = getCompassMode;
 
 // ===== AUTO-ROTATE MAP TO HEADING DURING NAVIGATION =====
 function setNavBearingTarget(heading) {
@@ -1045,7 +1078,21 @@ function stopNavBearingLoop() {
 
 function navBearingFrame() {
   navBearingRafId = null;
-  if (!followHeading || !isNavigating || !map || typeof map.setBearing !== 'function') return;
+  // Only auto-rotate the map in 'headingup' mode (Google Maps Heading-Up).
+  // In 'northup' mode the user controls the bearing manually.
+  if (compassMode !== 'headingup') {
+    if (followHeading && isNavigating && Number.isFinite(navBearingTarget)) {
+      // keep the loop running; user can flip back to headingup any time
+      navBearingRafId = requestAnimationFrame(navBearingFrame);
+    }
+    return;
+  }
+  if (!followHeading || !isNavigating || !map || typeof map.setBearing !== 'function') {
+    if (followHeading && isNavigating) {
+      navBearingRafId = requestAnimationFrame(navBearingFrame);
+    }
+    return;
+  }
   if (!Number.isFinite(navBearingTarget)) { navBearingRafId = requestAnimationFrame(navBearingFrame); return; }
 
   // Interpolate along the shortest arc -> smooth rotation, no long way around.
@@ -1446,6 +1493,8 @@ function updateDriveHeadingStatus() {
   const el = navDriveHeading();
   if (!el) return;
 
+  const mode = (typeof compassMode !== 'undefined') ? compassMode : 'headingup';
+
   const text = {
     gps: 'Hướng: GPS',
     device: 'Hướng: la bàn điện thoại',
@@ -1455,8 +1504,11 @@ function updateDriveHeadingStatus() {
   }[lastHeadingSource] || 'Hướng: đang chờ GPS';
 
   const parts = [text];
-  if (isNavigating && followHeading) parts.push('bản đồ bám hướng');
-  else if (isNavigating) parts.push('bản đồ hướng Bắc (chạm căn giữa để bám hướng)');
+  if (mode === 'headingup') {
+    parts.push('bản đồ bám hướng');
+  } else {
+    parts.push('bản đồ bám Bắc');
+  }
   if (lastAccuracy) parts.push('GPS ±' + Math.round(lastAccuracy) + ' m');
   if (wakeLock) parts.push('màn hình luôn bật');
   el.textContent = parts.join(' • ');
@@ -1544,81 +1596,3 @@ function estimateDurationMinutes(distanceMeters) {
 function escapeHtmlRoute(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-
-// ===== COMPASS DEBUG HELPERS =====
-function getCompassDebugState() {
-  return {
-    webkitHeading: compassDebugState.webkitHeading,
-    alpha: compassDebugState.alpha,
-    beta: compassDebugState.beta,
-    gamma: compassDebugState.gamma,
-    absolute: compassDebugState.absolute,
-    reason: compassDebugState.reason,
-    liveEvents: compassDebugState.liveEvents,
-    deviceOrientationActive,
-    isSecureContext: window.isSecureContext,
-    raw: deviceHeadingRaw,
-    smooth: deviceHeading,
-    source: lastHeadingSource,
-    hasDeviceOrientation: 'DeviceOrientationEvent' in window,
-    hasRequestPermission: typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function',
-  };
-}
-
-function updateCompassDebugPanel() {
-  const s = getCompassDebugState();
-  const $ = id => document.getElementById(id);
-  const set = (id, val) => { const el = $(id); if (el) el.textContent = val !== undefined && val !== null ? String(val) : '—'; };
-  set('cdWebkit', s.webkitHeading !== undefined ? Number(s.webkitHeading).toFixed(1) : '—');
-  set('cdAlpha', s.alpha !== undefined && s.alpha !== null ? Number(s.alpha).toFixed(1) : '—');
-  set('cdBeta', s.beta !== undefined && s.beta !== null ? Number(s.beta).toFixed(1) : '—');
-  set('cdGamma', s.gamma !== undefined && s.gamma !== null ? Number(s.gamma).toFixed(1) : '—');
-  set('cdAbsolute', s.absolute !== undefined ? String(s.absolute) : '—');
-  set('cdHeading', s.raw !== null ? Number(s.raw).toFixed(1) + '°' : '—');
-  set('cdSource', s.reason || '—');
-  set('cdActive', String(s.deviceOrientationActive));
-  set('cdSecure', String(s.isSecureContext));
-  set('cdRaw', s.raw !== null ? Number(s.raw).toFixed(1) + '°' : '—');
-  set('cdSmooth', s.smooth !== null ? Number(s.smooth).toFixed(1) + '°' : '—');
-
-  const statusEl = $('cdStatus');
-  const hintEl = $('cdHint');
-  if (statusEl) {
-    let lines = [];
-    lines.push('Sự kiện: ' + s.liveEvents + ' lần');
-    if (!s.hasDeviceOrientation) {
-      lines.push('⚠ Browser không hỗ trợ DeviceOrientationEvent');
-    } else if (!s.isSecureContext) {
-      lines.push('⚠ Cần HTTPS (hiện tại: ' + (location.protocol) + ')');
-    } else if (!s.deviceOrientationActive) {
-      lines.push('⚠ Chưa bật la bàn — bấm "Yêu cầu quyền"');
-    } else if (s.liveEvents === 0) {
-      lines.push('⚠ Đang nghe nhưng KHÔNG có sự kiện nào bắn');
-    } else if (s.reason && s.reason.startsWith('NO_VALID')) {
-      lines.push('⚠ ' + s.reason);
-    } else if (s.raw !== null) {
-      lines.push('✅ La bàn hoạt động: ' + Number(s.raw).toFixed(1) + '°');
-    }
-    statusEl.textContent = lines.join('\n');
-    statusEl.style.color = lines.some(l => l.startsWith('⚠')) ? '#ff6b6b' : '#00c864';
-  }
-  if (hintEl) {
-    let hints = [];
-    if (!s.hasDeviceOrientation) {
-      hints.push('Trình duyệt không hỗ trợ la bàn.\nThử Chrome/Firefox/Safari mới nhất.');
-    } else if (!s.isSecureContext) {
-      hints.push('Cần mở bằng HTTPS (localhost được coi là secure).\nTrên điện thoại phải dùng https:// hoặc localhost.');
-    } else if (!s.deviceOrientationActive) {
-      hints.push('Bấm nút "Yêu cầu quyền" trong panel.\n(iOS Safari bắt buộc cần quyền.)');
-    } else if (s.liveEvents === 0) {
-      hints.push('Sensor không bắn sự kiện.\n- Thử xoay điện thoại mạnh\n- Đảm bảo không có app nào chặn cảm biến\n- Thử Chrome thay vì trình duyệt khác');
-    }
-    hintEl.textContent = hints.join('\n');
-  }
-}
-
-// Expose for script.js and global access (routing.js loads after script.js)
-window.updateCompassDebugPanel = updateCompassDebugPanel;
-window.getCompassDebugState = getCompassDebugState;
-window.requestDeviceHeadingFromDebug = requestDeviceHeading;
-window.compassDebugState = compassDebugState;
