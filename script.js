@@ -2688,7 +2688,7 @@ function updateUserMarkerRotation(instant) {
   const bearing = (typeof map !== 'undefined' && map && typeof map.getBearing === 'function')
     ? map.getBearing()
     : 0;
-  const target = (((bearing - currentUserHeading) % 360) + 360) % 360;
+  const target = (((90 + bearing - currentUserHeading) % 360) + 360) % 360;
 
   if (appliedMarkerAngle === null) {
     appliedMarkerAngle = target;
