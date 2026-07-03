@@ -686,8 +686,7 @@ function stopNavigation(arrived) {
   setNavigationDriveMode(false);
   updateNavigationButtons();
   updateFollowControls();
-  // Giữ heading-up sau khi thoát dẫn đường để bản đồ luôn bám hướng điện thoại.
-  if (typeof setCompassMode === 'function') setCompassMode('headingup');
+  // Giữ nguyên trạng thái bám hướng hiện tại khi thoát dẫn đường.
   if (arrived) {
     updateNavStatus('Đã đến gần điểm đích.');
     showToast('Bạn đã đến gần điểm đích');

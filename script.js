@@ -222,9 +222,11 @@ async function loadAllowedLoginCodes() {
 function initLoginUI() {
   const form = $('loginForm');
   const accountBtn = $('accountBtn');
+  const resetBtn = $('resetBtn');
 
   if (form) form.addEventListener('submit', onLoginSubmit);
   if (accountBtn) accountBtn.addEventListener('click', logoutAndReload);
+  if (resetBtn) resetBtn.addEventListener('click', resetSavedAppData);
 }
 
 function setLoginError(message) {
@@ -350,6 +352,46 @@ function onLoginSubmit(event) {
 
 function logoutAndReload() {
   localStorage.removeItem(AUTH_STORAGE_KEY);
+  window.location.reload();
+}
+
+function cleanupLegacyStorageKeys() {
+  try {
+    localStorage.removeItem('bddr_compass_flip');
+  } catch (err) {
+    console.warn('Không thể dọn localStorage cũ', err);
+  }
+}
+
+function deleteIndexedDBDatabase(dbName) {
+  return new Promise(resolve => {
+    if (!('indexedDB' in window)) {
+      resolve(false);
+      return;
+    }
+    const request = indexedDB.deleteDatabase(dbName);
+    request.onsuccess = () => resolve(true);
+    request.onerror = () => resolve(false);
+    request.onblocked = () => resolve(false);
+  });
+}
+
+async function resetSavedAppData() {
+  const ok = window.confirm('Xóa toàn bộ dữ liệu đã lưu của app trên thiết bị này? Bạn sẽ cần đăng nhập lại.');
+  if (!ok) return;
+
+  Object.keys(localStorage).forEach(key => {
+    if (key === AUTH_STORAGE_KEY || key.startsWith('bddr-') || key.startsWith('bddr_')) {
+      localStorage.removeItem(key);
+    }
+  });
+
+  try {
+    await deleteIndexedDBDatabase(KML_CACHE_DB);
+  } catch (err) {
+    console.warn('Không thể xóa cache IndexedDB', err);
+  }
+
   window.location.reload();
 }
 
@@ -537,6 +579,7 @@ function initInfoModal() {
 }
 
 async function bootstrapApp() {
+  cleanupLegacyStorageKeys();
   initLoginUI();
   initInfoModal();
   setLoginBusy(true, 'Đang đọc danh sách đăng nhập...');
@@ -2874,7 +2917,9 @@ function bindCompassModeButtons() {
   buttons.forEach(btn => {
     btn.addEventListener('click', () => {
       if (typeof window.setCompassMode !== 'function') return;
-      window.setCompassMode('headingup');
+      const current = window.getCompassMode();
+      const next = (current === 'headingup') ? 'northup' : 'headingup';
+      window.setCompassMode(next);
       updateCompassModeButton();
     });
   });
