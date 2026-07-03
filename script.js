@@ -2858,15 +2858,14 @@ function updateCompassModeButton() {
     document.getElementById('navDriveCompassModeBtn')
   ].filter(Boolean);
   btns.forEach(btn => {
-    const isDriving = document.body.classList.contains('is-driving');
-    const active = isDriving && mode === 'headingup';
+    const active = mode === 'headingup';
     btn.classList.toggle('map-fab--active', active);
     btn.classList.toggle('icon-btn--active', active);
     btn.classList.toggle('compass-mode-btn--northup', !active);
     btn.classList.toggle('compass-mode-btn--headingup', active);
     btn.title = active
-      ? 'Đang bám hướng khi chỉ đường'
-      : 'Bám hướng chỉ bật khi chỉ đường';
+      ? 'Đang bám hướng — bấm để chuyển sang bám Bắc'
+      : 'Đang bám Bắc — bấm để chuyển sang bám hướng';
     btn.setAttribute('aria-pressed', String(active));
     btn.setAttribute('aria-label', btn.title);
   });
@@ -2880,12 +2879,6 @@ function bindCompassModeButtons() {
   buttons.forEach(btn => {
     btn.addEventListener('click', () => {
       if (typeof window.setCompassMode !== 'function') return;
-      const isDriving = document.body.classList.contains('is-driving');
-      if (!isDriving && btn.id === 'compassModeBtn') {
-        window.setCompassMode('northup');
-        updateCompassModeButton();
-        return;
-      }
       const current = window.getCompassMode();
       const next = (current === 'headingup') ? 'northup' : 'headingup';
       window.setCompassMode(next);

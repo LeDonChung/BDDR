@@ -50,11 +50,11 @@ const OFF_ROUTE_CONFIRM_MS = 5000;
 const ROUTE_REQUEST_TIMEOUT_MS = 12000;
 const EXACT_DESTINATION_CONNECT_METERS = 5;
 const FINAL_ACCESS_SPEED_MPS = 1.4;
-const NAV_HEADING_SMOOTH_ALPHA = 0.08;
-const NAV_HEADING_TARGET_DEADBAND_DEG = 2.2;
-const NAV_BEARING_LERP_ALPHA = 0.1;
-const NAV_BEARING_SNAP_DEG = 0.8;
-const COMPASS_RAW_DEADBAND_DEG = 1.2;
+const NAV_HEADING_SMOOTH_ALPHA = 0.04;
+const NAV_HEADING_TARGET_DEADBAND_DEG = 4;
+const NAV_BEARING_LERP_ALPHA = 0.06;
+const NAV_BEARING_SNAP_DEG = 1.4;
+const COMPASS_RAW_DEADBAND_DEG = 2.8;
 
 
 const routePanel = () => $('routePanel');
@@ -1036,7 +1036,7 @@ function headingFrame() {
     const delta = ((deviceHeadingRaw - deviceHeading) % 360 + 540) % 360 - 180;
     const alpha = (isNavigating && followHeading && compassMode === 'headingup')
       ? NAV_HEADING_SMOOTH_ALPHA
-      : 0.2;
+      : 0.12;
     deviceHeading = (((deviceHeading + delta * alpha) % 360) + 360) % 360;
   }
 
