@@ -25,8 +25,8 @@ let lastAccuracy = null;
 let pendingDirectRoute = false;
 let followHeading = false;
 // Compass mode for the map ('northup' = Bắc trên đầu, map đứng; 'headingup' = bản đồ xoay theo hướng).
-// Heading-up is the default during navigation, north-up is the default otherwise.
-let compassMode = 'headingup';
+// North-up is the default outside navigation; heading-up is enabled only during navigation.
+let compassMode = 'northup';
 // Flip the compass when an OEM/Android device reports the opposite direction.
 // Always flip compass direction for this deployment; the toggle button is hidden.
 let compassFlip = true;
@@ -50,6 +50,10 @@ const OFF_ROUTE_CONFIRM_MS = 5000;
 const ROUTE_REQUEST_TIMEOUT_MS = 12000;
 const EXACT_DESTINATION_CONNECT_METERS = 5;
 const FINAL_ACCESS_SPEED_MPS = 1.4;
+const NAV_HEADING_SMOOTH_ALPHA = 0.08;
+const NAV_HEADING_TARGET_DEADBAND_DEG = 2.2;
+const NAV_BEARING_LERP_ALPHA = 0.1;
+const NAV_BEARING_SNAP_DEG = 0.8;
 
 
 const routePanel = () => $('routePanel');
@@ -1024,7 +1028,10 @@ function headingFrame() {
     deviceHeading = deviceHeadingRaw;
   } else {
     const delta = ((deviceHeadingRaw - deviceHeading) % 360 + 540) % 360 - 180;
-    deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
+    const alpha = (isNavigating && followHeading && compassMode === 'headingup')
+      ? NAV_HEADING_SMOOTH_ALPHA
+      : 0.2;
+    deviceHeading = (((deviceHeading + delta * alpha) % 360) + 360) % 360;
   }
 
   compassFlip = true;
@@ -1099,7 +1106,11 @@ window.isCompassFlipped = isCompassFlipped;
 // ===== AUTO-ROTATE MAP TO HEADING DURING NAVIGATION =====
 function setNavBearingTarget(heading) {
   if (!Number.isFinite(heading)) return;
-  navBearingTarget = ((heading % 360) + 360) % 360;
+  const nextTarget = ((heading % 360) + 360) % 360;
+  const currentTarget = Number.isFinite(navBearingTarget) ? navBearingTarget : navBearingCurrent;
+  const delta = ((nextTarget - currentTarget) % 360 + 540) % 360 - 180;
+  if (Math.abs(delta) < NAV_HEADING_TARGET_DEADBAND_DEG) return;
+  navBearingTarget = nextTarget;
   if (followHeading && isNavigating) startNavBearingLoop();
 }
 
@@ -1137,10 +1148,10 @@ function navBearingFrame() {
 
   // Interpolate along the shortest arc -> smooth rotation, no long way around.
   let delta = ((navBearingTarget - navBearingCurrent) % 360 + 540) % 360 - 180;
-  if (Math.abs(delta) < 0.3) {
+  if (Math.abs(delta) < NAV_BEARING_SNAP_DEG) {
     navBearingCurrent = navBearingTarget;
   } else {
-    navBearingCurrent = (((navBearingCurrent + delta * 0.18) % 360) + 360) % 360;
+    navBearingCurrent = (((navBearingCurrent + delta * NAV_BEARING_LERP_ALPHA) % 360) + 360) % 360;
     // Only call setBearing when actually needed -> less tile redraw work on iPhone.
     programmaticBearing = true;
     map.setBearing(navBearingCurrent);

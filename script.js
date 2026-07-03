@@ -2852,20 +2852,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ===== COMPASS MODE BUTTONS (Google Maps style toggle) =====
 function updateCompassModeButton() {
-  const mode = (typeof window.getCompassMode === 'function') ? window.getCompassMode() : 'headingup';
+  const mode = (typeof window.getCompassMode === 'function') ? window.getCompassMode() : 'northup';
   const btns = [
     document.getElementById('compassModeBtn'),
     document.getElementById('navDriveCompassModeBtn')
   ].filter(Boolean);
   btns.forEach(btn => {
-    btn.classList.toggle('map-fab--active', mode === 'headingup');
-    btn.classList.toggle('icon-btn--active', mode === 'headingup');
-    btn.classList.toggle('compass-mode-btn--northup', mode === 'northup');
-    btn.classList.toggle('compass-mode-btn--headingup', mode === 'headingup');
-    btn.title = mode === 'northup'
-      ? 'Đang bám Bắc — bấm để chuyển sang bám hướng'
-      : 'Đang bám hướng — bấm để chuyển sang bám Bắc';
-    btn.setAttribute('aria-pressed', String(mode === 'headingup'));
+    const isDriving = document.body.classList.contains('is-driving');
+    const active = isDriving && mode === 'headingup';
+    btn.classList.toggle('map-fab--active', active);
+    btn.classList.toggle('icon-btn--active', active);
+    btn.classList.toggle('compass-mode-btn--northup', !active);
+    btn.classList.toggle('compass-mode-btn--headingup', active);
+    btn.title = active
+      ? 'Đang bám hướng khi chỉ đường'
+      : 'Bám hướng chỉ bật khi chỉ đường';
+    btn.setAttribute('aria-pressed', String(active));
     btn.setAttribute('aria-label', btn.title);
   });
 }
@@ -2878,6 +2880,12 @@ function bindCompassModeButtons() {
   buttons.forEach(btn => {
     btn.addEventListener('click', () => {
       if (typeof window.setCompassMode !== 'function') return;
+      const isDriving = document.body.classList.contains('is-driving');
+      if (!isDriving && btn.id === 'compassModeBtn') {
+        window.setCompassMode('northup');
+        updateCompassModeButton();
+        return;
+      }
       const current = window.getCompassMode();
       const next = (current === 'headingup') ? 'northup' : 'headingup';
       window.setCompassMode(next);
