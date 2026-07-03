@@ -20,7 +20,8 @@ let kmlFeatureGrid = new Map();
 let kmlLargeFeatures = [];
 let ctyCodeLabelBounds = [];
 let currentBaseLayer = null;
-let routeChoicePopup = null;
+let routeChoicePopup = null; // legacy (unused; route choice now uses #routeChoiceModal)
+let routeChoiceEscapeBound = false;
 let showCtyCodeLabels = true;
 let kmlStyleMode = 'street';
 let isInitialKMLLoading = false;
@@ -2257,6 +2258,9 @@ function onFeatureClick(e) {
 }
 
 function onMapBackgroundClick(e) {
+  // Ignore clicks on compass mode buttons.
+  if (e.originalEvent.target.closest('#compassModeBtn, #navDriveCompassModeBtn')) return;
+
   const hit = findRenderedFeatureAt(e.latlng);
   if (hit) {
     selectFeature(hit.layer, e.latlng);
@@ -2326,10 +2330,12 @@ function showRouteChoicePopup(destination) {
   pendingRouteDestination = destination;
   if (typeof closeRoutePanel === 'function') closeRoutePanel();
 
-  if (!map.getPane('routeChoicePane')) {
-    map.createPane('routeChoicePane');
-    map.getPane('routeChoicePane').style.zIndex = '1200';
-  }
+  const modal = $('routeChoiceModal');
+  const titleEl = $('routeChoiceTitle');
+  const coordsEl = $('routeChoiceCoords');
+  const directBtn = $('routeChoiceDirectBtn');
+  const googleBtn = $('routeChoiceGoogleBtn');
+  if (!modal || !titleEl || !coordsEl || !directBtn || !googleBtn) return;
 
   const latlng = normalizeDestinationLatLng(destination.latlng);
   const title = destination.name || 'Điểm đã chọn';
@@ -2338,52 +2344,47 @@ function showRouteChoicePopup(destination) {
     ? destination.desc + ' • ' + coords
     : coords;
 
-  const content = document.createElement('div');
-  content.className = 'route-choice';
-  content.innerHTML =
-    '<p class="route-choice__eyebrow">Điểm đến</p>' +
-    '<h3>' + escapeHtml(title) + '</h3>' +
-    '<p class="route-choice__coords">' + escapeHtml(subtitle) + '</p>' +
-    '<div class="route-choice__actions">' +
-      '<button type="button" class="btn btn--primary" data-route-action="direct">' +
-        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>' +
-        'Chỉ đường trực tiếp' +
-      '</button>' +
-      '<button type="button" class="btn btn--ghost" data-route-action="google">' +
-        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>' +
-        'Google Maps' +
-      '</button>' +
-    '</div>';
+  titleEl.textContent = title;
+  coordsEl.textContent = subtitle;
 
-  L.DomEvent.disableClickPropagation(content);
-  content.querySelector('[data-route-action="direct"]').addEventListener('click', () => {
-    if (routeChoicePopup) map.closePopup(routeChoicePopup);
-    if (typeof beginDirectRoute === 'function') {
-      beginDirectRoute(latlng, title);
-    }
-  });
-  content.querySelector('[data-route-action="google"]').addEventListener('click', () => {
-    if (routeChoicePopup) map.closePopup(routeChoicePopup);
-    if (typeof openGoogleMapsRoute === 'function') {
-      openGoogleMapsRoute(latlng, title);
-    }
-  });
+  const close = () => closeRouteChoiceModal();
+  const onDirect = () => {
+    close();
+    if (typeof beginDirectRoute === 'function') beginDirectRoute(latlng, title);
+  };
+  const onGoogle = () => {
+    close();
+    if (typeof openGoogleMapsRoute === 'function') openGoogleMapsRoute(latlng, title);
+  };
 
-  routeChoicePopup = L.popup({
-    pane: 'routeChoicePane',
-    className: 'route-choice-popup',
-    closeButton: true,
-    autoPan: true,
-    autoPanPaddingTopLeft: L.point(24, 96),
-    autoPanPaddingBottomRight: L.point(24, 24),
-    offset: L.point(0, -28),
-    maxWidth: 300,
-    minWidth: 230
-  })
-    .setLatLng(latlng)
-    .setContent(content)
-    .openOn(map);
+  // Re-bind handlers each time so they use the latest latlng/title.
+  modal.querySelectorAll('[data-route-choice-close]').forEach(el => {
+    el.onclick = close;
+  });
+  directBtn.onclick = onDirect;
+  googleBtn.onclick = onGoogle;
+
+  if (!routeChoiceEscapeBound) {
+    routeChoiceEscapeBound = true;
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && modal && modal.classList.contains('open')) {
+        closeRouteChoiceModal();
+      }
+    });
+  }
+
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
 }
+
+function closeRouteChoiceModal() {
+  const modal = $('routeChoiceModal');
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+}
+
 
 function normalizeDestinationLatLng(latlng) {
   if (Array.isArray(latlng)) return [Number(latlng[0]), Number(latlng[1])];

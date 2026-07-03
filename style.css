@@ -600,49 +600,6 @@ html, body {
 .popup-action:hover { background: #6aa0ff; }
 .leaflet-popup-close-button { color: var(--muted) !important; }
 
-.route-choice-popup .leaflet-popup-content {
-  width: 260px !important;
-  margin: 0 !important;
-}
-.route-choice {
-  padding: 14px;
-}
-.route-choice__eyebrow {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.2;
-  margin-bottom: 4px;
-  text-transform: uppercase;
-}
-.route-choice h3 {
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1.25;
-  font-weight: 700;
-  padding-right: 18px;
-  margin-bottom: 5px;
-}
-.route-choice__coords {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-  margin-bottom: 12px;
-  overflow-wrap: anywhere;
-}
-.route-choice__actions {
-  display: grid;
-  gap: 8px;
-}
-.route-choice .btn {
-  width: 100%;
-  min-height: 40px;
-  border-radius: 8px;
-  white-space: normal;
-}
-.route-choice .btn--ghost {
-  border-color: rgba(255, 255, 255, 0.14);
-}
 
 /* ====== ROUTE CONFIRM MODAL ====== */
 .modal {
@@ -1198,25 +1155,6 @@ html, body {
   background: transparent !important;
 }
 
-.route-choice-popup {
-  z-index: 1200 !important;
-}
-.route-choice-popup.leaflet-popup {
-  z-index: 1200 !important;
-}
-
-/* ===== COMPASS MODE BUTTON ===== */
-.map-fab--compass-mode {
-  background: #0f3460;
-  color: #fff;
-}
-.map-fab--compass-mode.map-fab--active {
-  background: #00c864;
-  color: #062a14;
-}
-.map-fab--compass-mode .compass-mode-icon {
-  transition: transform 0.3s ease;
-}
 .compass-mode-btn--northup .compass-mode-icon {
   transform: rotate(0deg);
 }
@@ -1234,3 +1172,14 @@ html, body {
   background: #ff8800;
   color: #fff;
 }
+
+/* ===== HEADING INDICATOR (always visible) ===== */
+/* Compass mode button — always visible, same spot as nav-drive controls */
+#compassModeBtn.map-fab {
+  position: absolute;
+  right: 18px;
+  top: 112px;
+  z-index: 860;
+}
+
+
