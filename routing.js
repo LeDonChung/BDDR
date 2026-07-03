@@ -51,10 +51,10 @@ const ROUTE_REQUEST_TIMEOUT_MS = 12000;
 const EXACT_DESTINATION_CONNECT_METERS = 5;
 const FINAL_ACCESS_SPEED_MPS = 1.4;
 const NAV_HEADING_SMOOTH_ALPHA = 0.04;
-const NAV_HEADING_TARGET_DEADBAND_DEG = 4;
-const NAV_BEARING_LERP_ALPHA = 0.06;
-const NAV_BEARING_SNAP_DEG = 1.4;
-const COMPASS_RAW_DEADBAND_DEG = 2.8;
+const NAV_HEADING_TARGET_DEADBAND_DEG = 5.5;
+const NAV_BEARING_LERP_ALPHA = 0.045;
+const NAV_BEARING_SNAP_DEG = 2;
+const COMPASS_RAW_DEADBAND_DEG = 4;
 
 
 const routePanel = () => $('routePanel');
@@ -1049,7 +1049,7 @@ function headingFrame() {
   //     smoothly under the dot; arrow is rendered at top (target = -bearing).
   currentUserHeading = Number.isFinite(deviceHeading) ? deviceHeading : deviceHeadingRaw;
   if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
-  if (isNavigating && followHeading && compassMode === 'headingup') setNavBearingTarget(deviceHeading);
+  if (compassMode === 'headingup') setNavBearingTarget(deviceHeading);
   throttledDriveHeadingStatus();
 
   // Keep smoothing until converged to the raw value.
@@ -1113,7 +1113,7 @@ function setNavBearingTarget(heading) {
   const delta = ((nextTarget - currentTarget) % 360 + 540) % 360 - 180;
   if (Math.abs(delta) < NAV_HEADING_TARGET_DEADBAND_DEG) return;
   navBearingTarget = nextTarget;
-  if (followHeading && isNavigating) startNavBearingLoop();
+  if (compassMode === 'headingup') startNavBearingLoop();
 }
 
 function startNavBearingLoop() {
@@ -1131,22 +1131,15 @@ function stopNavBearingLoop() {
 
 function navBearingFrame() {
   navBearingRafId = null;
-  // Only auto-rotate the map in 'headingup' mode (Google Maps Heading-Up).
-  // In 'northup' mode the user controls the bearing manually.
-  if (compassMode !== 'headingup') {
-    if (followHeading && isNavigating && Number.isFinite(navBearingTarget)) {
-      // keep the loop running; user can flip back to headingup any time
-      navBearingRafId = requestAnimationFrame(navBearingFrame);
-    }
+  if (compassMode !== 'headingup') return;
+  if (!map || typeof map.setBearing !== 'function') {
+    navBearingRafId = requestAnimationFrame(navBearingFrame);
     return;
   }
-  if (!followHeading || !isNavigating || !map || typeof map.setBearing !== 'function') {
-    if (followHeading && isNavigating) {
-      navBearingRafId = requestAnimationFrame(navBearingFrame);
-    }
+  if (!Number.isFinite(navBearingTarget)) {
+    navBearingRafId = requestAnimationFrame(navBearingFrame);
     return;
   }
-  if (!Number.isFinite(navBearingTarget)) { navBearingRafId = requestAnimationFrame(navBearingFrame); return; }
 
   // Interpolate along the shortest arc -> smooth rotation, no long way around.
   let delta = ((navBearingTarget - navBearingCurrent) % 360 + 540) % 360 - 180;
@@ -1154,7 +1147,7 @@ function navBearingFrame() {
     navBearingCurrent = navBearingTarget;
   } else {
     navBearingCurrent = (((navBearingCurrent + delta * NAV_BEARING_LERP_ALPHA) % 360) + 360) % 360;
-    // Only call setBearing when actually needed -> less tile redraw work on iPhone.
+    // Only call setBearing when actually needed -> less tile redraw work on mobile.
     programmaticBearing = true;
     map.setBearing(navBearingCurrent);
     programmaticBearing = false;
