@@ -50,11 +50,11 @@ const OFF_ROUTE_CONFIRM_MS = 5000;
 const ROUTE_REQUEST_TIMEOUT_MS = 12000;
 const EXACT_DESTINATION_CONNECT_METERS = 5;
 const FINAL_ACCESS_SPEED_MPS = 1.4;
-const NAV_HEADING_SMOOTH_ALPHA = 0.04;
-const NAV_HEADING_TARGET_DEADBAND_DEG = 5.5;
-const NAV_BEARING_LERP_ALPHA = 0.045;
-const NAV_BEARING_SNAP_DEG = 2;
-const COMPASS_RAW_DEADBAND_DEG = 4;
+const NAV_HEADING_SMOOTH_ALPHA = 0.025;
+const NAV_HEADING_TARGET_DEADBAND_DEG = 7;
+const NAV_BEARING_LERP_ALPHA = 0.035;
+const NAV_BEARING_SNAP_DEG = 2.8;
+const COMPASS_RAW_DEADBAND_DEG = 5.5;
 
 
 const routePanel = () => $('routePanel');
@@ -1029,7 +1029,7 @@ function headingFrame() {
     deviceHeading = deviceHeadingRaw;
   } else {
     const delta = ((deviceHeadingRaw - deviceHeading) % 360 + 540) % 360 - 180;
-    const alpha = (isNavigating && followHeading && compassMode === 'headingup')
+    const alpha = (compassMode === 'headingup')
       ? NAV_HEADING_SMOOTH_ALPHA
       : 0.12;
     deviceHeading = (((deviceHeading + delta * alpha) % 360) + 360) % 360;
@@ -1105,8 +1105,9 @@ function setNavBearingTarget(heading) {
   if (!Number.isFinite(heading)) return;
   const nextTarget = ((heading % 360) + 360) % 360;
   const currentTarget = Number.isFinite(navBearingTarget) ? navBearingTarget : navBearingCurrent;
-  const delta = ((nextTarget - currentTarget) % 360 + 540) % 360 - 180;
-  if (Math.abs(delta) < NAV_HEADING_TARGET_DEADBAND_DEG) return;
+  const targetDelta = ((nextTarget - currentTarget) % 360 + 540) % 360 - 180;
+  const bearingDelta = ((nextTarget - navBearingCurrent) % 360 + 540) % 360 - 180;
+  if (Math.abs(targetDelta) < NAV_HEADING_TARGET_DEADBAND_DEG && Math.abs(bearingDelta) < NAV_HEADING_TARGET_DEADBAND_DEG) return;
   navBearingTarget = nextTarget;
   if (compassMode === 'headingup') startNavBearingLoop();
 }
