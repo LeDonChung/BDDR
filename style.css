@@ -1191,3 +1191,8 @@ html, body {
 #navDriveCompassFlipBtn[hidden] {
   display: none !important;
 }
+
+/* Hide Leaflet default rotate compass; app uses custom heading controls. */
+.leaflet-control-rotate {
+  display: none !important;
+}

@@ -54,6 +54,7 @@ const NAV_HEADING_SMOOTH_ALPHA = 0.08;
 const NAV_HEADING_TARGET_DEADBAND_DEG = 2.2;
 const NAV_BEARING_LERP_ALPHA = 0.1;
 const NAV_BEARING_SNAP_DEG = 0.8;
+const COMPASS_RAW_DEADBAND_DEG = 1.2;
 
 
 const routePanel = () => $('routePanel');
@@ -1008,7 +1009,12 @@ function onDeviceOrientation(event) {
   // Only store the raw value here. Smoothing + rendering run on requestAnimationFrame
   // to avoid jitter (previously transform updated ~60x/s with a 0.18s CSS transition,
   // which kept restarting the transition and jittered on iPhone).
-  deviceHeadingRaw = normalizeDegrees(heading);
+  const normalizedHeading = normalizeDegrees(heading);
+  if (Number.isFinite(deviceHeadingRaw)) {
+    const rawDelta = ((normalizedHeading - deviceHeadingRaw) % 360 + 540) % 360 - 180;
+    if (Math.abs(rawDelta) < COMPASS_RAW_DEADBAND_DEG) return;
+  }
+  deviceHeadingRaw = normalizedHeading;
   lastHeadingSource = 'device';
   startHeadingLoop();
 }
@@ -1041,11 +1047,7 @@ function headingFrame() {
   //     map stays at bearing=0 (no setBearing here, no lag).
   //   - headingup: feed smoothed heading to navBearing target so the map rotates
   //     smoothly under the dot; arrow is rendered at top (target = -bearing).
-  if (compassMode === 'northup') {
-    currentUserHeading = Number.isFinite(deviceHeadingRaw) ? deviceHeadingRaw : deviceHeading;
-  } else {
-    currentUserHeading = Number.isFinite(deviceHeadingRaw) ? deviceHeadingRaw : deviceHeading;
-  }
+  currentUserHeading = Number.isFinite(deviceHeading) ? deviceHeading : deviceHeadingRaw;
   if (typeof updateUserMarkerRotation === 'function') updateUserMarkerRotation(true);
   if (isNavigating && followHeading && compassMode === 'headingup') setNavBearingTarget(deviceHeading);
   throttledDriveHeadingStatus();
