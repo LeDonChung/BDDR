@@ -1182,4 +1182,12 @@ html, body {
   z-index: 860;
 }
 
+#compassModeBtn.map-fab[hidden] {
+  display: none !important;
+}
 
+
+
+#navDriveCompassFlipBtn[hidden] {
+  display: none !important;
+}

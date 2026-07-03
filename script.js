@@ -281,6 +281,27 @@ function applyDataProfileToUI() {
   }
 }
 
+function startCompassOnAppOpen() {
+  if (typeof requestDeviceHeading !== 'function') return;
+
+  // Android/desktop or previously granted permission can start immediately.
+  requestDeviceHeading(false);
+
+  // iOS Safari requires a user gesture for Motion & Orientation permission.
+  const requestOnFirstGesture = () => {
+    if (typeof deviceOrientationActive !== 'undefined' && deviceOrientationActive) return;
+    requestDeviceHeading(true);
+  };
+  window.addEventListener('pointerdown', requestOnFirstGesture, { once: true, passive: true });
+  window.addEventListener('touchstart', requestOnFirstGesture, { once: true, passive: true });
+}
+
+function bindLocateButton() {
+  const locateBtn = $('locateBtn');
+  if (!locateBtn) return;
+  locateBtn.onclick = () => locateUser(true, { userInitiated: true, focusZoom: 17 });
+}
+
 function startAppForUser(loginCode) {
   const normalized = normalizeLoginCode(loginCode);
   if (!allowedLoginCodes.has(normalized)) {
@@ -303,6 +324,8 @@ function startAppForUser(loginCode) {
   if (appStarted) return;
   appStarted = true;
   initMap();
+  bindLocateButton();
+  startCompassOnAppOpen();
   setTimeout(() => locateUser(!loadAppState()), 80);
 }
 
@@ -2621,7 +2644,7 @@ async function locateUser(pan, options) {
     const gpsHeading = (Number.isFinite(heading) && Number.isFinite(speed) && speed > 0.5)
       ? heading
       : (Number.isFinite(heading) ? heading : null);
-    setUserPosition(latlng, accuracy, pan, gpsHeading, false);
+    setUserPosition(latlng, accuracy, pan, gpsHeading, false, options.focusZoom);
     startGeoWatch(true);
     scheduleKMLLoad();
     if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
@@ -2739,7 +2762,7 @@ function updateUserMarkerRotation(instant) {
   wrap.style.transition = instant ? 'none' : 'transform 0.18s ease-out';
   wrap.style.transform = 'rotate(' + appliedMarkerAngle.toFixed(2) + 'deg)';
 }
-function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
+function setUserPosition(latlng, accuracy, pan, heading, navigationMode, focusZoom) {
   currentUserLatLng = L.latLng(latlng[0], latlng[1]);
 
   // Ưu tiên la bàn thiết bị khi đã bật: mũi tên xoay mượt và chính xác hơn GPS.
@@ -2810,13 +2833,14 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode) {
     showParcelSearchSuggestions(parcelSearchInput.value);
   }
 
-  if (pan && navigationMode) {
+  if (pan && navigationMode === true) {
     // During navigation the camera is driven by the smooth requestAnimationFrame
     // follow loop (startNavFollowLoop in routing.js). Animating panTo on every GPS
     // fix queues animations and makes the map lag behind the user; the rAF loop
     // glides to the latest position with effectively zero delay instead.
   } else if (pan) {
-    map.flyTo(latlng, Math.max(map.getZoom(), 15), { animate: true, duration: 0.6 });
+    const targetZoom = Number.isFinite(focusZoom) ? focusZoom : 15;
+    map.flyTo(latlng, Math.max(map.getZoom(), targetZoom), { animate: true, duration: 0.6 });
   }
 }
 

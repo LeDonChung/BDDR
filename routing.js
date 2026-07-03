@@ -28,8 +28,8 @@ let followHeading = false;
 // Heading-up is the default during navigation, north-up is the default otherwise.
 let compassMode = 'headingup';
 // Flip the compass when an OEM/Android device reports the opposite direction.
-// Toggle at runtime: localStorage.bddr_compass_flip = "1" / "0", or via ?flip in URL.
-let compassFlip = false;
+// Always flip compass direction for this deployment; the toggle button is hidden.
+let compassFlip = true;
 let compassFlipRead = false;
 let navBearingTarget = null;
 let navBearingCurrent = 0;
@@ -844,6 +844,11 @@ function setNavigationDriveMode(enabled) {
   const overlay = navDriveOverlay();
   document.body.classList.toggle('is-driving', enabled);
 
+  // Khi vao che do chi duong, overlay nav-drive da co san nut bam huong rieng,
+  // nen an nut bam huong noi ngoai ban do de tranh trung lap.
+  const outerCompass = document.getElementById('compassModeBtn');
+  if (outerCompass) outerCompass.hidden = enabled;
+
   if (overlay) {
     overlay.hidden = !enabled;
     overlay.setAttribute('aria-hidden', enabled ? 'false' : 'true');
@@ -1022,20 +1027,7 @@ function headingFrame() {
     deviceHeading = (((deviceHeading + delta * 0.2) % 360) + 360) % 360;
   }
 
-  // Read flip flag from URL/localStorage on first run; cheap check.
-  if (!compassFlipRead) {
-    compassFlipRead = true;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const urlFlip = params.get('flip');
-      if (urlFlip !== null) {
-        compassFlip = urlFlip === '1' || urlFlip === 'true';
-      } else {
-        const stored = localStorage.getItem('bddr_compass_flip');
-        compassFlip = stored === '1' || stored === 'true';
-      }
-    } catch (e) { /* ignore */ }
-  }
+  compassFlip = true;
 
   // Mode behaviour:
   //   - northup: arrow always uses the raw compass value for instant feedback;
@@ -1095,11 +1087,10 @@ function setCompassMode(mode) {
 
 function getCompassMode() { return compassMode; }
 function toggleCompassFlip() {
-  compassFlip = !compassFlip;
-  try { localStorage.setItem('bddr_compass_flip', compassFlip ? '1' : '0'); } catch (e) { /* ignore */ }
+  compassFlip = true;
   return compassFlip;
 }
-function isCompassFlipped() { return compassFlip; }
+function isCompassFlipped() { return true; }
 window.setCompassMode = setCompassMode;
 window.getCompassMode = getCompassMode;
 window.toggleCompassFlip = toggleCompassFlip;
