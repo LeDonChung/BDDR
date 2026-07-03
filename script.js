@@ -42,9 +42,11 @@ let permissionModalAction = null;
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
 const DATA_ROOT = 'data';
-const USERS_SOURCE = DATA_ROOT + '/users.txt';
+const USERS_SOURCE = DATA_ROOT + '/_u7f3b9c2d.vault';
 // false: test local trong repo; true: doc PMTiles tren Cloudflare R2
 const USE_R2_PMTILES = true;
+// true: chan chuot phai va cac loi tat mo DevTools; false: cho phep binh thuong
+const BLOCK_DEVTOOLS_SHORTCUTS = true;
 const R2_PMTILES_BASE_URL = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr';
 const AUTH_STORAGE_KEY = 'bddr-auth-user';
 const GEOJSON_DATA_VERSION = '1.0.2';
@@ -88,6 +90,33 @@ const GROUP_STYLE_COLORS = Object.freeze({
 });
 
 const $ = (id) => document.getElementById(id);
+
+function initDevToolsShortcutGuard() {
+  if (!BLOCK_DEVTOOLS_SHORTCUTS) return;
+
+  const blockEvent = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return false;
+  };
+
+  document.addEventListener('keydown', (event) => {
+    const key = String(event.key || '').toLowerCase();
+    const isF12 = key === 'f12' || event.keyCode === 123;
+    const isDevToolsShortcut =
+      (event.ctrlKey && event.shiftKey && ['i', 'j', 'c'].includes(key)) ||
+      (event.ctrlKey && key === 'u');
+
+    if (isF12 || isDevToolsShortcut) {
+      return blockEvent(event);
+    }
+  }, true);
+
+  document.addEventListener('contextmenu', blockEvent, true);
+}
+
+initDevToolsShortcutGuard();
 
 function getPlatformPermissionHint(kind) {
   const ua = navigator.userAgent || '';
@@ -144,6 +173,23 @@ function getVectorFeatureVisualStyle(group, isLine, isDetailLabel) {
 // ===== AUTH / DATA PROFILE =====
 function normalizeLoginCode(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function decodeStoredLoginCode(line) {
+  const value = String(line || '').trim();
+  if (!value || value.startsWith('#')) return '';
+
+  const withoutComment = value.replace(/#.*/, '').trim();
+  if (!withoutComment.startsWith('enc:')) return normalizeLoginCode(withoutComment);
+
+  try {
+    const reversedBase64 = withoutComment.slice(4).split('').reverse().join('');
+    const decoded = decodeURIComponent(escape(atob(reversedBase64)));
+    return normalizeLoginCode(decoded);
+  } catch (err) {
+    console.warn('Cannot decode login code:', err);
+    return '';
+  }
 }
 
 function resolveDataProfile(loginCode) {
@@ -213,7 +259,7 @@ async function loadAllowedLoginCodes() {
 
   const codes = (await response.text())
     .split(/\r?\n/)
-    .map(line => normalizeLoginCode(line.replace(/#.*/, '')))
+    .map(decodeStoredLoginCode)
     .filter(Boolean);
 
   if (!codes.length) throw new Error('Danh sách đăng nhập trống');
@@ -589,7 +635,7 @@ async function bootstrapApp() {
     await loadAllowedLoginCodes();
   } catch (err) {
     console.error('Không thể đọc danh sách đăng nhập', err);
-    showLoginScreen('Không đọc được data/users.txt');
+    showLoginScreen('Không đọc được dữ liệu đăng nhập');
     return;
   }
 
