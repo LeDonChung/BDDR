@@ -2684,11 +2684,6 @@ function onMapRotate() {
   updateUserMarkerRotation(true);
   // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tự chuyển sang chế độ "Bắc trên đầu"
   // để map giữ góc xoay user chọn và mũi tên la bàn ăn theo la bàn thiết bị.
-  if (typeof programmaticBearing !== 'undefined' && !programmaticBearing) {
-    if (typeof setCompassMode === 'function' && getCompassMode && getCompassMode() !== 'northup') {
-      setCompassMode('northup');
-    }
-  }
   scheduleRotateTileRefresh();
   saveAppStateDebounced();
 }
@@ -2852,7 +2847,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ===== COMPASS MODE BUTTONS (Google Maps style toggle) =====
 function updateCompassModeButton() {
-  const mode = (typeof window.getCompassMode === 'function') ? window.getCompassMode() : 'northup';
+  const mode = (typeof window.getCompassMode === 'function') ? window.getCompassMode() : 'headingup';
   const btns = [
     document.getElementById('compassModeBtn'),
     document.getElementById('navDriveCompassModeBtn')
@@ -2879,9 +2874,7 @@ function bindCompassModeButtons() {
   buttons.forEach(btn => {
     btn.addEventListener('click', () => {
       if (typeof window.setCompassMode !== 'function') return;
-      const current = window.getCompassMode();
-      const next = (current === 'headingup') ? 'northup' : 'headingup';
-      window.setCompassMode(next);
+      window.setCompassMode('headingup');
       updateCompassModeButton();
     });
   });

@@ -25,8 +25,8 @@ let lastAccuracy = null;
 let pendingDirectRoute = false;
 let followHeading = false;
 // Compass mode for the map ('northup' = Bắc trên đầu, map đứng; 'headingup' = bản đồ xoay theo hướng).
-// North-up is the default outside navigation; heading-up is enabled only during navigation.
-let compassMode = 'northup';
+// Heading-up is always enabled so the map follows the phone direction.
+let compassMode = 'headingup';
 // Flip the compass when an OEM/Android device reports the opposite direction.
 // Always flip compass direction for this deployment; the toggle button is hidden.
 let compassFlip = true;
@@ -686,13 +686,8 @@ function stopNavigation(arrived) {
   setNavigationDriveMode(false);
   updateNavigationButtons();
   updateFollowControls();
-  // Khi thoát dẫn đường, trả bản đồ về chế độ Bắc trên đầu (Bắc lên trên, mũi tên ăn la bàn).
-  if (typeof setCompassMode === 'function') setCompassMode('northup');
-  if (map && typeof map.setBearing === 'function') {
-    programmaticBearing = true;
-    map.setBearing(0);
-    programmaticBearing = false;
-  }
+  // Giữ heading-up sau khi thoát dẫn đường để bản đồ luôn bám hướng điện thoại.
+  if (typeof setCompassMode === 'function') setCompassMode('headingup');
   if (arrived) {
     updateNavStatus('Đã đến gần điểm đích.');
     showToast('Bạn đã đến gần điểm đích');
