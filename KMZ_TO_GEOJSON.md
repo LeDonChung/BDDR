@@ -191,3 +191,10 @@ data/BDDR.pmtiles
 ```
 
 Lưu ý: `convert:pmtiles` cần Docker Desktop đang chạy vì script dùng tippecanoe container. File `data/BDDR.geojson` và `data/BDDR.pmtiles` là file build local, không commit lên GitHub.
+
+Chạy lại data
+1..19 | Where-Object { $_ -ne 11 } | ForEach-Object {
+    $doi = "doi{0:D2}" -f $_
+    Write-Host "Converting $doi..."
+    npm run convert:team -- $doi
+  }

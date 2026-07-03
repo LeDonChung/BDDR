@@ -29,6 +29,7 @@ let parcelSearchIndex = [];
 let parcelSearchActiveIndex = -1;
 let parcelSearchResults = [];
 let labelFeatures = [];
+let syntheticSearchItems = [];
 let labelsLoaded = false;
 let labelLayer = null;
 let pmtilesLayer = null;
@@ -1943,12 +1944,15 @@ async function awaitLabelsLoad() {
     if (!response.ok) throw new Error('HTTP ' + response.status);
     parseLabelsGeoJSON(await response.json());
     labelsLoaded = true;
+    await buildSyntheticSearchItems();
     buildParcelSearchIndex();
     const input = $('parcelSearchInput');
     if (input && input.value.trim()) showParcelSearchSuggestions(input.value);
   } catch (err) {
     console.warn('Không thể tải label GeoJSON', currentDataProfile.labelsSource, err);
     labelsLoaded = true;
+    await buildSyntheticSearchItems();
+    buildParcelSearchIndex();
   }
 }
 
@@ -1982,6 +1986,98 @@ function parseLabelsGeoJSON(geojson) {
       layer:   null
     });
   });
+}
+
+function getTeamNumberFromFolder(folder) {
+  const match = String(folder || '').match(/^doi(\d{2})$/);
+  return match ? Number(match[1]) : null;
+}
+
+function getCenterFromPoints(points) {
+  const valid = (points || []).filter(point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]));
+  if (!valid.length) return null;
+  let south = Infinity, west = Infinity, north = -Infinity, east = -Infinity;
+  valid.forEach(point => {
+    south = Math.min(south, point[0]);
+    north = Math.max(north, point[0]);
+    west = Math.min(west, point[1]);
+    east = Math.max(east, point[1]);
+  });
+  return [(south + north) / 2, (west + east) / 2];
+}
+
+function createSyntheticSearchItem(label, desc, center, aliases) {
+  if (!center) return null;
+  return {
+    type: 'synthetic',
+    feature: null,
+    label,
+    desc: desc || '',
+    center,
+    searchMeta: buildParcelSearchMeta([label, desc].concat(aliases || []), label)
+  };
+}
+
+const STATIC_LANDMARKS = [
+  { label: 'Công ty 75', desc: 'Khu vực Công ty 75', center: [13.82489176936573, 107.75814989532904], aliases: ['cong ty 75', 'cty75', 'ct75'] },
+  { label: 'Công ty (Trụ sở)', desc: 'Trụ sở Công ty', center: [13.82443621532529, 107.76191118649463], aliases: ['cong ty tru so', 'trụ sở', 'tru so', 'cty tru so'] },
+  { label: 'Công ty (Xe máy)', desc: 'Khu xe máy Công ty', center: [13.822043911401929, 107.76295330824667], aliases: ['cong ty xe may', 'xe may', 'xe máy'] },
+  { label: 'Công ty (Bệnh xá)', desc: 'Bệnh xá Công ty', center: [13.818147435645015, 107.7382802847028], aliases: ['benh xa', 'bệnh xá', 'cong ty benh xa'] },
+  { label: 'NMCB', desc: 'Nhà máy chế biến', center: [13.815779899280614, 107.73991899778878], aliases: ['nmcb', 'nha may che bien', 'nhà máy chế biến'] },
+  { label: 'Trường Mầm Non Sao Mai', desc: 'Trường mầm non Sao Mai', center: [13.825699056676605, 107.77402152437855], aliases: ['sao mai', 'mam non sao mai', 'mầm non sao mai', 'truong mam non', 'trường mầm non'] }
+];
+
+async function buildSyntheticSearchItems() {
+  syntheticSearchItems = [];
+  const items = [];
+  STATIC_LANDMARKS.forEach(place => {
+    const item = createSyntheticSearchItem(place.label, place.desc, place.center, place.aliases);
+    if (item) items.push(item);
+  });
+
+  const ct75Center = getCenterFromPoints(labelFeatures
+    .filter(feature => /^(ct75|cty75)$/i.test(String(feature.unit || '').trim()) || /\bCT75\b/i.test(feature.label))
+    .map(feature => feature.center));
+  const ct75Item = createSyntheticSearchItem('Cty75 / CT75', 'Toàn bộ các lô CT75', ct75Center, ['cty75', 'ct75', 'cong ty 75', 'công ty 75']);
+  if (ct75Item) items.push(ct75Item);
+
+  if (currentDataProfile && currentDataProfile.folder !== 'main') {
+    const teamNumber = getTeamNumberFromFolder(currentDataProfile.folder);
+    const teamCenter = getCenterFromPoints(labelFeatures.map(feature => feature.center));
+    const teamItem = createSyntheticSearchItem(currentDataProfile.shortLabel || currentDataProfile.displayName, 'Khu vực ' + (currentDataProfile.shortLabel || currentDataProfile.displayName), teamCenter, ['doi ' + teamNumber, 'đội ' + teamNumber, 'doi' + String(teamNumber).padStart(2, '0')]);
+    if (teamItem) items.push(teamItem);
+    syntheticSearchItems = items;
+    return;
+  }
+
+  const teams = getAllowedTeams().filter(team => !team.isMain);
+  const teamItems = await Promise.all(teams.map(async team => {
+    try {
+      const resp = await fetch('data/' + team.folder + '/BDDR-labels.geojson', { cache: 'no-store' });
+      if (!resp.ok) return null;
+      const geojson = await resp.json();
+      const points = (geojson.features || [])
+        .filter(feature => feature && feature.geometry && feature.geometry.type === 'Point')
+        .map(feature => {
+          const coordinates = feature.geometry.coordinates || [];
+          const lng = Number(coordinates[0]);
+          const lat = Number(coordinates[1]);
+          return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+        })
+        .filter(Boolean);
+      const teamNumber = getTeamNumberFromFolder(team.folder);
+      return createSyntheticSearchItem(team.name, 'Khu vực ' + team.name, getCenterFromPoints(points), ['doi ' + teamNumber, 'đội ' + teamNumber, team.folder]);
+    } catch (err) {
+      console.warn('Không thể tạo chỉ mục tìm kiếm cho', team.folder, err);
+      return null;
+    }
+  }));
+
+  teamItems.filter(Boolean).forEach(item => items.push(item));
+  const allTeamsCenter = getCenterFromPoints(teamItems.filter(Boolean).map(item => item.center));
+  const allTeamsItem = createSyntheticSearchItem('Các đội', 'Tất cả khu vực đội', allTeamsCenter, ['cac doi', 'các đội', 'doi', 'đội']);
+  if (allTeamsItem) items.unshift(allTeamsItem);
+  syntheticSearchItems = items;
 }
 
 function buildParcelSearchIndex() {
@@ -2023,7 +2119,7 @@ function buildParcelSearchIndex() {
     };
   });
 
-  parcelSearchIndex = polygonItems.concat(labelItems)
+  parcelSearchIndex = syntheticSearchItems.concat(polygonItems, labelItems)
     .filter(item => item.searchMeta && item.searchMeta.text.length > 0);
 }
 
