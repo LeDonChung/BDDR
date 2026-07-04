@@ -661,9 +661,9 @@ const osmLayer = L.tileLayer(
     maxZoom: 21,
     maxNativeZoom: 19,
     minZoom: 2,
-    updateWhenZooming: false,
+    updateWhenZooming: true,
     updateWhenIdle: true,
-    keepBuffer: 3,
+    keepBuffer: 4,
     subdomains: 'abcd'
   }
 );
@@ -676,9 +676,9 @@ const satelliteLayer = L.tileLayer(
     maxNativeZoom: 21,
     minZoom: 2,
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-    updateWhenZooming: false,
+    updateWhenZooming: true,
     updateWhenIdle: true,
-    keepBuffer: 2
+    keepBuffer: 4
   }
 );
 
@@ -703,7 +703,7 @@ function initMap() {
     inertia: true,
     inertiaDeceleration: 3400,
     fadeAnimation: false,
-    zoomAnimation: false,
+    zoomAnimation: true,
     markerZoomAnimation: true,
     tap: true,
     tapTolerance: FEATURE_CLICK_TOLERANCE_PX,
@@ -1797,10 +1797,10 @@ function gridKey(lat, lng) {
 }
 
 function onKMLZoomStart() {
+  // Do not remove layers during zoomstart. Removing/re-adding vector layers
+  // mid-zoom causes visible white flashes on Android; cancel pending work and
+  // let zoomend/moveend update layers after the gesture settles.
   cancelKMLRender();
-  kmlActiveFeatures.forEach(feature => {
-    if (!feature.clickable || feature.isLabelShape) removeFeatureLayer(feature);
-  });
 }
 
 function isFeatureRenderable(feature, bounds, zoom) {
