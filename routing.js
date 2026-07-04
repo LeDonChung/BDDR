@@ -18,6 +18,8 @@ let deviceHeadingRaw = null;
 let deviceOrientationActive = false;
 let lastHeadingSource = 'none';
 let markerRotationRafId = null;
+let preferredOrientationEventType = null;
+let lastDeviceHeadingAt = 0;
 // Debug state shared with compass debug panel (removed - feature retired)
 let wakeLock = null;
 let offRouteSince = null;
@@ -55,6 +57,8 @@ const NAV_HEADING_TARGET_DEADBAND_DEG = 7;
 const NAV_BEARING_LERP_ALPHA = 0.035;
 const NAV_BEARING_SNAP_DEG = 2.8;
 const COMPASS_RAW_DEADBAND_DEG = 5.5;
+const COMPASS_MAX_TURN_RATE_DEG_PER_SEC = 180;
+const COMPASS_SPIKE_GRACE_DEG = 12;
 
 
 const routePanel = () => $('routePanel');
@@ -957,6 +961,8 @@ function stopDeviceHeading() {
   deviceOrientationActive = false;
   deviceHeading = null;
   deviceHeadingRaw = null;
+  preferredOrientationEventType = null;
+  lastDeviceHeadingAt = 0;
   if (markerRotationRafId !== null) {
     cancelAnimationFrame(markerRotationRafId);
     markerRotationRafId = null;
@@ -964,51 +970,46 @@ function stopDeviceHeading() {
 }
 
 function onDeviceOrientation(event) {
-  // iOS Safari: webkitCompassHeading is the true compass heading (clockwise from North).
-  // Android Chrome: use deviceorientationabsolute (e.absolute=true) and compute heading
-  // from alpha/beta/gamma so it stays correct when the phone is held vertically.
+  // iOS Safari: webkitCompassHeading is the true compass heading.
+  // Android often fires both relative and absolute events; mixing them makes the
+  // map jump between two reference frames, so prefer the first absolute source.
+  const eventType = event.type || '';
   const compassHeading = Number(event.webkitCompassHeading);
   const alpha = Number(event.alpha);
-  const beta = Number(event.beta);
-  const gamma = Number(event.gamma);
   let heading = null;
 
   if (Number.isFinite(compassHeading)) {
     heading = compassHeading;
   } else if (event.absolute === true && Number.isFinite(alpha)) {
-    // Tilt-compensated heading for Android.
-    // When phone is held vertical (beta ~90) the raw alpha is wrong; the spec
-    // formula adds a beta*gamma/90 correction. Source: W3C deviceorientation spec.
-    let h;
-    if (Number.isFinite(beta) && Number.isFinite(gamma)) {
-      h = -(alpha + beta * gamma / 90);
-    } else {
-      h = -alpha;
-    }
-    // Normalize to [0,360)
-    h = ((h % 360) + 360) % 360;
-    heading = h;
-  } else if (Number.isFinite(alpha)) {
-    // Fallback for older browsers without absolute orientation: assume phone flat,
-    // which is the only case where alpha equals heading on Android.
+    preferredOrientationEventType = eventType || 'absolute';
     heading = 360 - alpha;
+  } else if (!preferredOrientationEventType && Number.isFinite(alpha)) {
+    heading = 360 - alpha;
+  } else {
+    return;
   }
 
+  if (preferredOrientationEventType && eventType && eventType !== preferredOrientationEventType && !Number.isFinite(compassHeading)) return;
   if (!Number.isFinite(heading)) return;
 
-  // Optional flip when the user reports the compass pointing the wrong way
-  // (some Android devices / OEM skins report opposite direction).
   if (compassFlip) heading = ((360 - heading) % 360 + 360) % 360;
 
-  // Only store the raw value here. Smoothing + rendering run on requestAnimationFrame
-  // to avoid jitter (previously transform updated ~60x/s with a 0.18s CSS transition,
-  // which kept restarting the transition and jittered on iPhone).
+  const now = performance.now();
   const normalizedHeading = normalizeDegrees(heading);
   if (Number.isFinite(deviceHeadingRaw)) {
     const rawDelta = ((normalizedHeading - deviceHeadingRaw) % 360 + 540) % 360 - 180;
+    const elapsedSeconds = lastDeviceHeadingAt ? Math.max(0.016, (now - lastDeviceHeadingAt) / 1000) : 0.016;
+    const allowedDelta = Math.max(COMPASS_RAW_DEADBAND_DEG, COMPASS_MAX_TURN_RATE_DEG_PER_SEC * elapsedSeconds + COMPASS_SPIKE_GRACE_DEG);
     if (Math.abs(rawDelta) < COMPASS_RAW_DEADBAND_DEG) return;
+    if (Math.abs(rawDelta) > allowedDelta) {
+      deviceHeadingRaw = normalizeDegrees(deviceHeadingRaw + Math.sign(rawDelta) * allowedDelta);
+    } else {
+      deviceHeadingRaw = normalizedHeading;
+    }
+  } else {
+    deviceHeadingRaw = normalizedHeading;
   }
-  deviceHeadingRaw = normalizedHeading;
+  lastDeviceHeadingAt = now;
   lastHeadingSource = 'device';
   startHeadingLoop();
 }
