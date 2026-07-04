@@ -30,6 +30,8 @@ let followHeading = false;
 // Compass mode for the map ('northup' = Bắc trên đầu, map đứng; 'headingup' = bản đồ xoay theo hướng).
 // Heading-up is always enabled so the map follows the phone direction.
 let compassMode = 'headingup';
+// In heading-up mode Leaflet bearing rotates opposite the compass heading.
+const HEADING_UP_BEARING_INVERTED = true;
 // Flip only when a device reports the opposite compass direction.
 let compassFlip = false;
 let compassFlipRead = false;
@@ -1066,6 +1068,11 @@ function headingFrame() {
   if (remain > 0.2) startHeadingLoop();
 }
 
+function getHeadingUpBearing(heading) {
+  const normalized = ((heading % 360) + 360) % 360;
+  return HEADING_UP_BEARING_INVERTED ? ((360 - normalized) % 360) : normalized;
+}
+
 function throttledDriveHeadingStatus() {
   if (driveHeadingStatusTimer) return;
   updateDriveHeadingStatus();
@@ -1089,8 +1096,8 @@ function setCompassMode(mode) {
   } else {
     // Heading-up: rotate map toward current heading so the arrow points up.
     if (Number.isFinite(deviceHeading)) {
-      navBearingTarget = deviceHeading;
-      navBearingCurrent = ((navBearingTarget % 360) + 360) % 360;
+      navBearingTarget = getHeadingUpBearing(deviceHeading);
+      navBearingCurrent = navBearingTarget;
       map.setBearing(navBearingCurrent);
       startNavBearingLoop();
     } else {
@@ -1120,7 +1127,7 @@ window.isCompassFlipped = isCompassFlipped;
 // ===== AUTO-ROTATE MAP TO HEADING DURING NAVIGATION =====
 function setNavBearingTarget(heading) {
   if (!Number.isFinite(heading)) return;
-  const nextTarget = ((heading % 360) + 360) % 360;
+  const nextTarget = getHeadingUpBearing(heading);
   const currentTarget = Number.isFinite(navBearingTarget) ? navBearingTarget : navBearingCurrent;
   const targetDelta = ((nextTarget - currentTarget) % 360 + 540) % 360 - 180;
   const bearingDelta = ((nextTarget - navBearingCurrent) % 360 + 540) % 360 - 180;
