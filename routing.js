@@ -20,6 +20,7 @@ let lastHeadingSource = 'none';
 let markerRotationRafId = null;
 let preferredOrientationEventType = null;
 let lastDeviceHeadingAt = 0;
+let lastOrientationTilt = null;
 // Debug state shared with compass debug panel (removed - feature retired)
 let wakeLock = null;
 let offRouteSince = null;
@@ -29,9 +30,8 @@ let followHeading = false;
 // Compass mode for the map ('northup' = Bắc trên đầu, map đứng; 'headingup' = bản đồ xoay theo hướng).
 // Heading-up is always enabled so the map follows the phone direction.
 let compassMode = 'headingup';
-// Flip the compass when an OEM/Android device reports the opposite direction.
-// Always flip compass direction for this deployment; the toggle button is hidden.
-let compassFlip = true;
+// Flip only when a device reports the opposite compass direction.
+let compassFlip = false;
 let compassFlipRead = false;
 let navBearingTarget = null;
 let navBearingCurrent = 0;
@@ -59,6 +59,8 @@ const NAV_BEARING_SNAP_DEG = 2.8;
 const COMPASS_RAW_DEADBAND_DEG = 5.5;
 const COMPASS_MAX_TURN_RATE_DEG_PER_SEC = 180;
 const COMPASS_SPIKE_GRACE_DEG = 12;
+const COMPASS_TILT_JITTER_DEG = 7;
+const COMPASS_TILT_SPIKE_LIMIT_DEG = 3.5;
 
 
 const routePanel = () => $('routePanel');
@@ -963,6 +965,7 @@ function stopDeviceHeading() {
   deviceHeadingRaw = null;
   preferredOrientationEventType = null;
   lastDeviceHeadingAt = 0;
+  lastOrientationTilt = null;
   if (markerRotationRafId !== null) {
     cancelAnimationFrame(markerRotationRafId);
     markerRotationRafId = null;
@@ -976,6 +979,8 @@ function onDeviceOrientation(event) {
   const eventType = event.type || '';
   const compassHeading = Number(event.webkitCompassHeading);
   const alpha = Number(event.alpha);
+  const beta = Number(event.beta);
+  const gamma = Number(event.gamma);
   let heading = null;
 
   if (Number.isFinite(compassHeading)) {
@@ -994,12 +999,23 @@ function onDeviceOrientation(event) {
 
   if (compassFlip) heading = ((360 - heading) % 360 + 360) % 360;
 
+  const tilt = (!Number.isFinite(compassHeading) && Number.isFinite(beta) && Number.isFinite(gamma))
+    ? Math.hypot(beta, gamma)
+    : null;
+  const tiltDelta = Number.isFinite(tilt) && Number.isFinite(lastOrientationTilt)
+    ? Math.abs(tilt - lastOrientationTilt)
+    : 0;
+  if (Number.isFinite(tilt)) lastOrientationTilt = tilt;
+
   const now = performance.now();
   const normalizedHeading = normalizeDegrees(heading);
   if (Number.isFinite(deviceHeadingRaw)) {
     const rawDelta = ((normalizedHeading - deviceHeadingRaw) % 360 + 540) % 360 - 180;
     const elapsedSeconds = lastDeviceHeadingAt ? Math.max(0.016, (now - lastDeviceHeadingAt) / 1000) : 0.016;
-    const allowedDelta = Math.max(COMPASS_RAW_DEADBAND_DEG, COMPASS_MAX_TURN_RATE_DEG_PER_SEC * elapsedSeconds + COMPASS_SPIKE_GRACE_DEG);
+    const rateLimitedDelta = COMPASS_MAX_TURN_RATE_DEG_PER_SEC * elapsedSeconds + COMPASS_SPIKE_GRACE_DEG;
+    const allowedDelta = tiltDelta > COMPASS_TILT_JITTER_DEG
+      ? COMPASS_TILT_SPIKE_LIMIT_DEG
+      : Math.max(COMPASS_RAW_DEADBAND_DEG, rateLimitedDelta);
     if (Math.abs(rawDelta) < COMPASS_RAW_DEADBAND_DEG) return;
     if (Math.abs(rawDelta) > allowedDelta) {
       deviceHeadingRaw = normalizeDegrees(deviceHeadingRaw + Math.sign(rawDelta) * allowedDelta);
@@ -1034,8 +1050,6 @@ function headingFrame() {
       : 0.12;
     deviceHeading = (((deviceHeading + delta * alpha) % 360) + 360) % 360;
   }
-
-  compassFlip = true;
 
   // Mode behaviour:
   //   - northup: arrow always uses the raw compass value for instant feedback;
@@ -1091,10 +1105,13 @@ function setCompassMode(mode) {
 
 function getCompassMode() { return compassMode; }
 function toggleCompassFlip() {
-  compassFlip = true;
+  compassFlip = !compassFlip;
+  deviceHeading = null;
+  deviceHeadingRaw = null;
+  lastOrientationTilt = null;
   return compassFlip;
 }
-function isCompassFlipped() { return true; }
+function isCompassFlipped() { return compassFlip; }
 window.setCompassMode = setCompassMode;
 window.getCompassMode = getCompassMode;
 window.toggleCompassFlip = toggleCompassFlip;

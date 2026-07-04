@@ -2807,8 +2807,8 @@ async function locateUser(pan, options) {
 function onMapRotate() {
   // Update heading arrow immediately, compensating for map bearing (no lag).
   updateUserMarkerRotation(true);
-  // Nếu xoay bản đồ bằng tay (2 ngón / la bàn), tự chuyển sang chế độ "Bắc trên đầu"
-  // để map giữ góc xoay user chọn và mũi tên la bàn ăn theo la bàn thiết bị.
+  // Manual map rotation should not be countered here; heading-up auto rotation
+  // is controlled by the compass mode button.
   scheduleRotateTileRefresh();
   saveAppStateDebounced();
 }
