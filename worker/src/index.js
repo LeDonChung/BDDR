@@ -880,6 +880,7 @@ function renderLogsTable(data, options) {
   const baseQuery = account ? '&account=' + encodeURIComponent(account) : '';
   const prevHref = page > 1 ? '?page=' + (page - 1) + '&pageSize=' + pageSize + baseQuery : '';
   const nextHref = page < totalPages ? '?page=' + (page + 1) + '&pageSize=' + pageSize + baseQuery : '';
+  const currentPageIds = rows.map(r => r.id).filter(Boolean);
 
   const head = `
     <tr>
@@ -926,6 +927,7 @@ function renderLogsTable(data, options) {
         <input type="number" name="pageSize" min="1" max="${PAGE_SIZE_MAX}" value="${escapeHtml(pageSize)}" />
       </label>
       <button type="submit">Lọc</button>
+      <button type="button" id="clearPageLogsBtn" class="danger"${currentPageIds.length ? '' : ' disabled'}>Xoa log trang hien tai</button>
     </form>`;
 
   const nav = `
@@ -953,6 +955,8 @@ function renderLogsTable(data, options) {
   .filter label { display: flex; flex-direction: column; font-size: 0.85rem; color: #52606d; }
   .filter input { padding: 6px 8px; border: 1px solid #cbd2d9; border-radius: 6px; min-width: 180px; }
   .filter button { padding: 6px 14px; background: #1f6feb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; height: 32px; }
+  .filter button.danger { background: #c81e1e; }
+  .filter button:disabled { opacity: 0.55; cursor: not-allowed; }
   .nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; }
   .btn { padding: 4px 10px; background: #fff; border: 1px solid #cbd2d9; border-radius: 6px; text-decoration: none; color: #1f2933; font-size: 0.9rem; }
   .btn[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
@@ -987,6 +991,33 @@ function renderLogsTable(data, options) {
   <footer>
     API: <code>GET /api/login-log/recent</code> (JSON) · <code>POST /api/login-log</code> (ghi log) · Cập nhật lúc ${escapeHtml(new Date().toISOString())}
   </footer>
+  <script>
+    const CURRENT_PAGE_LOG_IDS = ${JSON.stringify(currentPageIds)};
+    const clearBtn = document.getElementById('clearPageLogsBtn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', async () => {
+        if (!CURRENT_PAGE_LOG_IDS.length) return;
+        const token = localStorage.getItem('bddr-admin-token');
+        if (!token) { alert('Can dang nhap admin truoc khi xoa log. Hay vao /admin dang nhap roi quay lai trang nay.'); return; }
+        if (!confirm('Xoa ' + CURRENT_PAGE_LOG_IDS.length + ' dong log dang hien thi?')) return;
+        clearBtn.disabled = true;
+        try {
+          const resp = await fetch('/api/admin/login-logs/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ ids: CURRENT_PAGE_LOG_IDS })
+          });
+          const body = await resp.json().catch(() => ({}));
+          if (!resp.ok || !body.ok) throw new Error(body.error || ('HTTP ' + resp.status));
+          alert('Da xoa ' + body.deleted + ' dong log');
+          location.reload();
+        } catch (err) {
+          clearBtn.disabled = false;
+          alert('Loi: ' + (err && err.message ? err.message : err));
+        }
+      });
+    }
+  </script>
 </body>
 </html>`;
 }

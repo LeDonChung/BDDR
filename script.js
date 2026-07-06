@@ -594,9 +594,14 @@ function resetInfoModal() {
   if (error) { error.hidden = true; error.textContent = ''; }
 }
 
+function normalizeTeamFolder(folder) {
+  const match = String(folder || '').trim().match(/^doi(\d{1,2})$/);
+  return match ? 'doi' + String(Number(match[1])).padStart(2, '0') : String(folder || '').trim();
+}
+
 function getAllowedTeams() {
   if (!currentAuthUser) return [];
-  if (currentAuthUser === 'doankinhtecty75') {
+  if (currentAuthUser === 'ledonchung' || currentAuthUser === 'doankinhtecty75') {
     // All known teams
     return [
       { folder: 'main',        name: 'Công ty (Toàn bộ)',   isMain: true },
@@ -622,12 +627,21 @@ function getAllowedTeams() {
   }
 
   // Regular team: can only view their own info
+  const profile = currentDataProfile || resolveDataProfile(currentAuthUser);
+  if (profile && profile.folder) {
+    const folder = normalizeTeamFolder(profile.folder);
+    const teamNumber = getTeamNumberFromFolder(folder);
+    return [{
+      folder,
+      name: profile.displayName || (teamNumber ? 'Doi ' + teamNumber : folder),
+      isMain: folder === 'main'
+    }];
+  }
+
   const match = currentAuthUser.match(/^cty75doi(\d{1,2})$/);
   if (!match) return [];
   const teamNum = String(Number(match[1])).padStart(2, '0');
-  const profile = resolveDataProfile(currentAuthUser);
-  const teamName = profile ? profile.displayName : 'Đội ' + Number(match[1]);
-  return [{ folder: 'doi' + teamNum, name: teamName, isMain: false }];
+  return [{ folder: 'doi' + teamNum, name: 'Doi ' + Number(match[1]), isMain: false }];
 }
 
 function renderInfoTeamPicker() {
@@ -667,7 +681,7 @@ function renderInfoTeamPicker() {
 }
 
 async function fetchTeamInfoText(folder, teamName) {
-  const safeFolder = String(folder || '').trim();
+  const safeFolder = normalizeTeamFolder(folder);
   const safeTeamName = String(teamName || '').trim();
   const candidates = [
     'data/' + safeFolder + '/info.txt',
