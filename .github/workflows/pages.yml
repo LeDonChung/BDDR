@@ -39,7 +39,6 @@ jobs:
             --exclude='img/' \
             --exclude='*.log'
           touch _site/.nojekyll
-          test -f _site/data/_u7f3b9c2d.vault
 
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
@@ -49,3 +48,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
