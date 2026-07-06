@@ -382,8 +382,22 @@ function getPositionLogPayload(position) {
   };
 }
 
+let pendingGpsLogAfterLogin = false;
+
 async function writeLoginAccessLog(position) {
   if (!currentAuthUser) return;
+
+  if (!position) {
+    // Lần đầu chưa có quyền/GPS: ghi log ngay với trạng thái unavailable
+    // và đánh dấu để sau khi user cấp quyền sẽ ghi thêm 1 log có tọa độ
+    pendingGpsLogAfterLogin = true;
+  } else {
+    pendingGpsLogAfterLogin = false;
+  }
+
+  const positionPayload = position
+    ? getPositionLogPayload(position)
+    : { locationStatus: 'unavailable' };
 
   try {
     await fetch(getLoginLogEndpoint(), {
@@ -397,7 +411,7 @@ async function writeLoginAccessLog(position) {
         browser: getBrowserSummary(),
         platform: navigator.platform || '',
         language: navigator.language || ''
-      }, getPositionLogPayload(position)))
+      }, positionPayload))
     });
   } catch (err) {
     console.warn('Không thể ghi thông tin đăng nhập', err);
@@ -429,9 +443,16 @@ async function startAppForUser(loginCode) {
   bindLocateButton();
   startCompassOnAppOpen();
   const shouldPanToLocation = !loadAppState();
+  // Lưu log lần đầu ngay khi đăng nhập thành công (không phụ thuộc GPS / quyền vị trí)
+  // Lần 2 (có GPS) sẽ được locateUser tự ghi khi user vừa cấp quyền vị trí
+  writeLoginAccessLog(null);
   setTimeout(async () => {
-    const initialPosition = await locateUser(shouldPanToLocation, { userInitiated: true });
-    await writeLoginAccessLog(initialPosition);
+    let initialPosition = null;
+    try {
+      initialPosition = await locateUser(shouldPanToLocation, { userInitiated: true });
+    } catch (err) {
+      console.warn('Không lấy được vị trí khi đăng nhập', err);
+    }
     if (initialPosition && typeof bootstrapApp._onboardReady === 'function') {
       bootstrapApp._onboardReady();
     }
@@ -2891,6 +2912,12 @@ async function locateUser(pan, options) {
     if (typeof endPoint !== 'undefined' && endPoint && typeof tryAutoRoute === 'function') {
       tryAutoRoute();
     }
+    // Nếu trước đó đã ghi log lần đầu khi login (chưa có quyền) thì giờ user vừa cấp quyền
+    // -> ghi thêm 1 log có tọa độ để D1 lưu cả thông tin vị trí
+    if (pendingGpsLogAfterLogin && currentAuthUser) {
+      pendingGpsLogAfterLogin = false;
+      writeLoginAccessLog(pos);
+    }
     return pos;
   } catch (err) {
     console.warn(err);
@@ -3418,6 +3445,11 @@ function updateCompassFlipButton(flipped) {
 }
 window.updateCompassFlipButton = updateCompassFlipButton;
 window.updateCompassModeButton = updateCompassModeButton;
+
+
+
+
+
 
 
 
