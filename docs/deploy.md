@@ -129,3 +129,4 @@ Hoặc mở trang HTML: <https://bddr-tong-log.<ten-account>.workers.dev/>
 - Nếu user không cấp quyền vị trí, log vẫn có tài khoản, thời gian, IP, trình duyệt nhưng tọa độ sẽ null.
 - Log được ghi **ngay khi user đăng nhập thành công** (kể cả khi chưa cấp quyền vị trí). Nếu sau đó user cấp quyền, hệ thống sẽ tự ghi thêm một dòng log kèm tọa độ trong cùng phiên đăng nhập.
 - Danh sách mã đăng nhập và mapping folder lưu trong bảng users của D1. Sửa user không cần đẩy code.
+

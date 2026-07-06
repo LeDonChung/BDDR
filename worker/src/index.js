@@ -162,8 +162,8 @@ async function updateUser(env, code, payload) {
 
 async function deleteUser(env, code) {
   const normalized = cleanText(code, 80).toLowerCase();
-  if (normalized === 'doankinhtecty75') {
-    throw new Error('Không thể xoá tài khoản tổng');
+  if (normalized === ADMIN_CODE) {
+    throw new Error('Không thể xoá tài khoản admin');
   }
   // Xoá sessions của user trước
   await env.DB.prepare('DELETE FROM sessions WHERE code = ?').bind(normalized).run();
@@ -193,8 +193,10 @@ async function destroySessionsByCode(env, code) {
   return { ok: true, code: normalized, deleted: (result && result.meta && result.meta.changes) || 0 };
 }
 
+const ADMIN_CODE = 'ledonchung';
+
 function isAdminUser(user) {
-  return user && user.code === 'doankinhtecty75';
+  return user && user.code === ADMIN_CODE;
 }
 
 async function getUserFromRequest(request, env) {
@@ -209,7 +211,7 @@ async function getUserFromRequest(request, env) {
 async function requireAdmin(request, env) {
   const user = await getUserFromRequest(request, env);
   if (!user) return { error: 'Cần đăng nhập admin', status: 401 };
-  if (!isAdminUser(user)) return { error: 'Chỉ tài khoản tổng mới có quyền admin', status: 403 };
+  if (!isAdminUser(user)) return { error: 'Chỉ tài khoản ' + ADMIN_CODE + ' mới có quyền admin', status: 403 };
   return { user };
 }
 
@@ -298,7 +300,7 @@ function renderAdminPage() {
   <!-- Login card (hiện khi chưa có token) -->
   <div id="loginCard" class="login-card">
     <h2>Đăng nhập admin</h2>
-    <p>Chỉ tài khoản <code>doankinhtecty75</code> mới có quyền truy cập trang này.</p>
+    <p>Chỉ tài khoản <code>ledonchung</code> mới có quyền truy cập trang này.</p>
     <input id="loginCode" type="text" placeholder="Nhập mã đăng nhập" autocomplete="off" />
     <button id="loginBtn">Đăng nhập</button>
     <div class="err" id="loginErr"></div>
@@ -437,7 +439,7 @@ async function trySession() {
   if (!adminToken) return setLoggedOutUI();
   try {
     const r = await api('/api/session');
-    if (r.user && r.user.code === 'doankinhtecty75') {
+    if (r.user && r.user.code === ADMIN_CODE) {
       setLoggedInUI(adminToken, r.user.code);
     } else {
       toast('Tài khoản không có quyền admin', 'err');
@@ -506,7 +508,7 @@ function renderUsers() {
     '<td><div class="row-actions">' +
       '<button data-act="edit" data-code="' + esc(u.code) + '">Sửa</button>' +
       '<button data-act="toggle" data-code="' + esc(u.code) + '" data-active="' + (u.isActive ? '1' : '0') + '">' + (u.isActive ? 'Khoá' : 'Mở') + '</button>' +
-      '<button data-act="delete" data-code="' + esc(u.code) + '" class="danger">Xoá</button>' +
+      (u.code === ADMIN_CODE ? '' : '<button data-act="delete" data-code="' + esc(u.code) + '" class="danger">Xoá</button>') +
     '</div></td>' +
     '</tr>'
   ).join('');
@@ -525,7 +527,7 @@ function openModal(user) {
   $('#modalTitle').textContent = user ? 'Sửa user: ' + user.code : 'Thêm user mới';
   const f = $('#userForm');
   f.reset();
-  f.elements.code.disabled = !!user;
+  f.elements.code.disabled = !!(user && user.code === ADMIN_CODE);
   if (user) {
     f.elements.code.value = user.code || '';
     f.elements.team.value = user.team || '';
@@ -1161,6 +1163,9 @@ export default {
     return json({ ok: false, error: 'Not found' }, 404);
   }
 };
+
+
+
 
 
 

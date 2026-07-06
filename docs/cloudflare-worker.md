@@ -320,7 +320,7 @@ Bảng `users` lưu danh sách mã đăng nhập và ánh xạ tới folder dữ
 
 | Cột | Kiểu | Mô tả |
 | --- | --- | --- |
-| `code` | TEXT PRIMARY KEY | Mã đăng nhập, ví dụ `cty75doi01`, `doankinhtecty75` |
+| `code` | TEXT PRIMARY KEY | Mã đăng nhập, ví dụ `cty75doi01`, `ledonchung` |
 | `team` | TEXT NOT NULL | Tên đội / đơn vị, ví dụ `Đội 1`, `Công ty 75` |
 | `folder` | TEXT NOT NULL | Folder dữ liệu, ví dụ `doi01`, `main` |
 | `short_label` | TEXT | Tên ngắn hiển thị |
@@ -340,7 +340,7 @@ Web tự build đường dẫn dữ liệu từ `folder`:
 
 ### Seed dữ liệu mẫu
 
-File `worker/seed-users.sql` chèn sẵn 1 tài khoản tổng (`doankinhtecty75`) và 99 đội (`cty75doi1` … `cty75doi99`, folder `doi01` … `doi99`). Chạy 1 lần sau khi tạo bảng:
+File `worker/seed-users.sql` chèn sẵn 1 tài khoản tổng (`ledonchung`) và 99 đội (`cty75doi1` … `cty75doi99`, folder `doi01` … `doi99`). Chạy 1 lần sau khi tạo bảng:
 
 ```powershell
 npx wrangler d1 execute bddr_logs --file worker/seed-users.sql --remote
@@ -416,7 +416,7 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 ### Truy cập
 
 - URL: <https://bddr-tong-log.<ten-account>.workers.dev/admin>
-- Đăng nhập bằng tài khoản `doankinhtecty75` (tài khoản tổng). Token lưu `localStorage[bddr-admin-token]`.
+- Đăng nhập bằng tài khoản `ledonchung` (tài khoản tổng). Token lưu `localStorage[bddr-admin-token]`.
 - API gọi với `Authorization: Bearer <token>`. Worker kiểm tra session + quyền admin.
 
 ### 3 tab chính
@@ -425,7 +425,7 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 2. **Sessions**: chọn user → xem danh sách session đang hoạt động (token rút gọn, IP, UA, thời gian tạo/hết hạn/lần cuối). Có nút "Huỷ tất cả session" để đăng xuất hàng loạt.
 3. **Logs theo user**: chọn user → xem log đăng nhập tương ứng (dùng lại API `/api/login-log/recent` có sẵn).
 
-### API admin (tất cả cần Bearer token của `doankinhtecty75`)
+### API admin (tất cả cần Bearer token của `ledonchung`)
 
 | Method + Path | Mô tả |
 | --- | --- |
@@ -438,9 +438,9 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 
 ### Quy tắc
 
-- Không thể xoá tài khoản `doankinhtecty75` (bảo vệ admin).
+- Không thể xoá tài khoản `ledonchung` (bảo vệ admin).
 - Xoá user tự động xoá luôn session của user đó.
-- Tất cả request admin phải có `Authorization` header và user phải là `doankinhtecty75`. Nếu không sẽ trả 401/403.
+- Tất cả request admin phải có `Authorization` header và user phải là `ledonchung`. Nếu không sẽ trả 401/403.
 
 ## 14. Đề xuất mở rộng sau này
 
@@ -450,6 +450,7 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 - Đẩy log cũ hơn sang R2 / KV để giảm chi phí D1.
 - Cron Trigger dọn log cũ trên 90 ngày.
 - Workers AI gán nhãn log (phát hiện bất thường) – free tier.
+
 
 
 
