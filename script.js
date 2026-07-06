@@ -33,7 +33,6 @@ let syntheticSearchItems = [];
 let labelsLoaded = false;
 let labelLayer = null;
 let pmtilesLayer = null;
-let allowedLoginCodes = new Set();
 let currentAuthUser = null;
 let currentDataProfile = null;
 let appStarted = false;
@@ -42,14 +41,20 @@ let permissionModalAction = null;
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
 const DATA_ROOT = 'data';
-const USERS_SOURCE = DATA_ROOT + '/_u7f3b9c2d.vault';
 // false: test local trong repo; true: doc PMTiles tren Cloudflare R2
 const USE_R2_PMTILES = true;
 // true: chan chuot phai va cac loi tat mo DevTools; false: cho phep binh thuong
-const BLOCK_DEVTOOLS_SHORTCUTS = true;
+const BLOCK_DEVTOOLS_SHORTCUTS = false;
 const R2_PMTILES_BASE_URL = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr';
-const AUTH_STORAGE_KEY = 'bddr-auth-user';
-const LOGIN_LOG_ENDPOINT = 'https://bddr-tong-log.bddr1247912.workers.dev/api/login-log';
+// R2: <base>/bddr/<folder>/BDDR.pmtiles  (base đã chứa '/bddr')
+const LOG_API_BASE = 'https://bddr-tong-log.bddr1247912.workers.dev';
+const LOGIN_LOG_ENDPOINT = LOG_API_BASE + '/api/login-log';
+const USERS_API_URL = LOG_API_BASE + '/api/users';
+const LOGIN_API_URL = LOG_API_BASE + '/api/login';
+const SESSION_API_URL = LOG_API_BASE + '/api/session';
+const LOGOUT_API_URL = LOG_API_BASE + '/api/session/logout';
+const SESSION_STORAGE_KEY = 'bddr-session-token';
+const SESSION_KEEPALIVE_MS = 5 * 60 * 1000; // 5 phút gọi /api/session để sliding TTL
 const GEOJSON_DATA_VERSION = '1.0.2';
 const KML_CACHE_DB = 'bddr-map-cache';
 const KML_CACHE_STORE = 'kml';
@@ -172,67 +177,84 @@ function getVectorFeatureVisualStyle(group, isLine, isDetailLabel) {
 }
 
 // ===== AUTH / DATA PROFILE =====
+// Không cache user phía client: Worker là nguồn chính (GET /api/users).
+// Phiên đăng nhập được cấp bằng POST /api/login -> token lưu localStorage, TTL 60 phút (sliding).
+
+let currentSessionToken = null;
+let sessionKeepaliveTimer = null;
+let currentUserRecord = null;
+
 function normalizeLoginCode(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
 }
 
-function decodeStoredLoginCode(line) {
-  const value = String(line || '').trim();
-  if (!value || value.startsWith('#')) return '';
+function userToProfile(user) {
+  if (!user) return null;
+  const folder = user.folder || 'main';
+  return {
+    userCode: user.code,
+    folder,
+    dataDir: DATA_ROOT + '/' + folder,
+    displayName: user.team || user.code,
+    shortLabel: user.shortLabel || user.team || user.code,
+    subtitle: user.subtitle || ''
+  };
+}
 
-  const withoutComment = value.replace(/#.*/, '').trim();
-  if (!withoutComment.startsWith('enc:')) return normalizeLoginCode(withoutComment);
+async function fetchUsersFromWorker() {
+  const response = await fetch(USERS_API_URL, { cache: 'no-store' });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.users)) throw new Error('Sai định dạng users');
+  return payload.users;
+}
 
-  try {
-    const reversedBase64 = withoutComment.slice(4).split('').reverse().join('');
-    const decoded = decodeURIComponent(escape(atob(reversedBase64)));
-    return normalizeLoginCode(decoded);
-  } catch (err) {
-    console.warn('Cannot decode login code:', err);
-    return '';
+function setSessionToken(token) {
+  currentSessionToken = token;
+  if (token) {
+    try { localStorage.setItem(SESSION_STORAGE_KEY, token); } catch (err) {}
+  } else {
+    try { localStorage.removeItem(SESSION_STORAGE_KEY); } catch (err) {}
   }
 }
 
-function resolveDataProfile(loginCode) {
-  const code = normalizeLoginCode(loginCode);
-  if (code === 'doankinhtecty75') {
-    return {
-      userCode: code,
-      folder: 'main',
-      dataDir: DATA_ROOT + '/main',
-      displayName: 'Toàn bộ vùng',
-      shortLabel: 'Công ty 75',
-      subtitle: 'Bản đồ đất đai - Toàn bộ vùng'
-    };
+function readStoredSessionToken() {
+  try { return localStorage.getItem(SESSION_STORAGE_KEY); } catch (err) { return null; }
+}
+
+function startSessionKeepalive() {
+  stopSessionKeepalive();
+  sessionKeepaliveTimer = setInterval(() => {
+    if (!currentSessionToken) return;
+    fetch(SESSION_API_URL, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'Authorization': 'Bearer ' + currentSessionToken }
+    }).then(async (r) => {
+      if (r.status === 401) {
+        // hết hạn giữa chừng: buộc đăng xuất
+        stopSessionKeepalive();
+        setSessionToken(null);
+        alert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+        window.location.reload();
+      }
+    }).catch(() => { /* bỏ qua, lần sau thử lại */ });
+  }, SESSION_KEEPALIVE_MS);
+}
+
+function stopSessionKeepalive() {
+  if (sessionKeepaliveTimer) {
+    clearInterval(sessionKeepaliveTimer);
+    sessionKeepaliveTimer = null;
   }
-
-  const teamMatch = code.match(/^cty75doi(\d{1,2})$/);
-  if (!teamMatch) return null;
-
-  const teamNumber = Number(teamMatch[1]);
-  if (!Number.isInteger(teamNumber) || teamNumber <= 0) return null;
-
-  const padded = String(teamNumber).padStart(2, '0');
-  return {
-    userCode: code,
-    folder: 'doi' + padded,
-    dataDir: DATA_ROOT + '/doi' + padded,
-    displayName: 'Đội ' + teamNumber,
-    shortLabel: 'Đội ' + teamNumber,
-    subtitle: 'Bản đồ đất đai - Đội ' + teamNumber
-  };
 }
 
 function buildPmtilesCandidates(profile) {
   const localSource = profile.dataDir + '/BDDR.pmtiles';
   if (!USE_R2_PMTILES) return [localSource];
 
+  // Cấu trúc trên R2: <base>/<folder>/BDDR.pmtiles  (R2_PMTILES_BASE_URL đã có '/bddr')
   const remoteFolderSource = R2_PMTILES_BASE_URL + '/' + profile.folder + '/BDDR.pmtiles';
-  // Giữ tương thích bản main cũ nếu trên R2 vẫn đang để ở root /bddr/BDDR.pmtiles
-  if (profile.folder === 'main') {
-    return [remoteFolderSource, R2_PMTILES_BASE_URL + '/BDDR.pmtiles', localSource];
-  }
-
   return [remoteFolderSource, localSource];
 }
 
@@ -254,18 +276,7 @@ function getAppStateKey() {
   return APP_STATE_KEY_PREFIX + ':' + (currentDataProfile ? currentDataProfile.folder : 'default');
 }
 
-async function loadAllowedLoginCodes() {
-  const response = await fetch(USERS_SOURCE, { cache: 'no-store' });
-  if (!response.ok) throw new Error('HTTP ' + response.status);
 
-  const codes = (await response.text())
-    .split(/\r?\n/)
-    .map(decodeStoredLoginCode)
-    .filter(Boolean);
-
-  if (!codes.length) throw new Error('Danh sách đăng nhập trống');
-  allowedLoginCodes = new Set(codes);
-}
 
 function initLoginUI() {
   const form = $('loginForm');
@@ -418,24 +429,25 @@ async function writeLoginAccessLog(position) {
   }
 }
 
-async function startAppForUser(loginCode) {
-  const normalized = normalizeLoginCode(loginCode);
-  if (!allowedLoginCodes.has(normalized)) {
-    throw new Error('Mã đăng nhập không hợp lệ');
+// startAppForUser giờ nhận { user, profile, token } từ /api/login hoặc /api/session
+async function startAppForUser(sessionResult) {
+  if (!sessionResult || !sessionResult.profile || !sessionResult.user) {
+    throw new Error('Phiên đăng nhập không hợp lệ');
   }
-
-  const profile = resolveDataProfile(normalized);
+  const profile = userToProfile(sessionResult.user) || sessionResult.profile;
   if (!profile) {
     throw new Error('Mã đăng nhập chưa có cấu hình dữ liệu');
   }
 
-  currentAuthUser = normalized;
+  currentAuthUser = profile.userCode;
+  currentUserRecord = sessionResult.user;
   currentDataProfile = withProfileSources(profile);
-  localStorage.setItem(AUTH_STORAGE_KEY, normalized);
+  if (sessionResult.token) setSessionToken(sessionResult.token);
   labelsLoaded = false;
   labelFeatures = [];
   applyDataProfileToUI();
   hideLoginScreen();
+  startSessionKeepalive();
 
   if (appStarted) return;
   appStarted = true;
@@ -471,7 +483,21 @@ async function onLoginSubmit(event) {
 
   try {
     setLoginBusy(true, '');
-    await startAppForUser(code);
+    const response = await fetch(LOGIN_API_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || ('HTTP ' + response.status));
+    }
+    await startAppForUser({
+      user: payload.user,
+      profile: payload.profile,
+      token: payload.token
+    });
   } catch (err) {
     setLoginBusy(false, err.message || 'Không thể đăng nhập');
     if (input) input.focus();
@@ -479,7 +505,20 @@ async function onLoginSubmit(event) {
 }
 
 function logoutAndReload() {
-  localStorage.removeItem(AUTH_STORAGE_KEY);
+  stopSessionKeepalive();
+  const token = currentSessionToken || readStoredSessionToken();
+  if (token) {
+    // fire-and-forget: gọi Worker huỷ session, không chờ
+    fetch(LOGOUT_API_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      keepalive: true,
+      headers: { 'Authorization': 'Bearer ' + token }
+    }).catch(() => {});
+  }
+  setSessionToken(null);
+  currentUserRecord = null;
+  currentAuthUser = null;
   window.location.reload();
 }
 
@@ -509,7 +548,7 @@ async function resetSavedAppData() {
   if (!ok) return;
 
   Object.keys(localStorage).forEach(key => {
-    if (key === AUTH_STORAGE_KEY || key.startsWith('bddr-') || key.startsWith('bddr_')) {
+    if (key === 'bddr-auth-user' || key === SESSION_STORAGE_KEY || key.startsWith('bddr-') || key.startsWith('bddr_')) {
       localStorage.removeItem(key);
     }
   });
@@ -728,24 +767,30 @@ async function bootstrapApp() {
   cleanupLegacyStorageKeys();
   initLoginUI();
   initInfoModal();
-  setLoginBusy(true, 'Đang đọc danh sách đăng nhập...');
+  setLoginBusy(true, 'Đang kiểm tra phiên đăng nhập...');
 
-  try {
-    await loadAllowedLoginCodes();
-  } catch (err) {
-    console.error('Không thể đọc danh sách đăng nhập', err);
-    showLoginScreen('Không đọc được dữ liệu đăng nhập');
-    return;
-  }
-
-  const savedUser = normalizeLoginCode(localStorage.getItem(AUTH_STORAGE_KEY));
-  if (savedUser && allowedLoginCodes.has(savedUser)) {
+  // Ưu tiên: nếu có token lưu local, gọi /api/session để khôi phục đăng nhập
+  const storedToken = readStoredSessionToken();
+  if (storedToken) {
     try {
-      await startAppForUser(savedUser);
-      return;
+      const r = await fetch(SESSION_API_URL, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { 'Authorization': 'Bearer ' + storedToken }
+      });
+      const payload = await r.json().catch(() => ({}));
+      if (r.ok && payload.ok) {
+        await startAppForUser({
+          user: payload.user,
+          profile: payload.profile,
+          token: storedToken
+        });
+        return;
+      }
+      // token hết hạn/không hợp lệ: xoá để form login lần sau sạch
+      setSessionToken(null);
     } catch (err) {
-      console.warn('Không thể khôi phục đăng nhập', err);
-      localStorage.removeItem(AUTH_STORAGE_KEY);
+      console.warn('Không verify được session, vào form login', err);
     }
   }
 
@@ -3445,6 +3490,17 @@ function updateCompassFlipButton(flipped) {
 }
 window.updateCompassFlipButton = updateCompassFlipButton;
 window.updateCompassModeButton = updateCompassModeButton;
+
+
+
+
+
+
+
+
+
+
+
 
 
 

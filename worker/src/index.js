@@ -1,21 +1,23 @@
 ﻿const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Max-Age': '86400'
 };
 
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 500;
+const SESSION_TTL_MS = 60 * 60 * 1000;          // 60 phút
+const SESSION_REFRESH_WINDOW_MS = 10 * 60 * 1000; // nếu còn < 10 phút thì gia hạn
+const SESSION_TOKEN_BYTES = 32;
 
-function json(body, status = 200) {
+function json(body, status = 200, extraHeaders) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
+    headers: Object.assign({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-      ...CORS_HEADERS
-    }
+      'Cache-Control': 'no-store'
+    }, extraHeaders || {}, CORS_HEADERS)
   });
 }
 
@@ -67,6 +69,125 @@ function cleanText(value, maxLength) {
 function cleanNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function generateToken(bytes) {
+  // 16 bytes hex là đủ cho session token; tránh crypto.getRandomValues có thể bị lỗi runtime
+  let s = '';
+  for (let i = 0; i < bytes / 2; i++) {
+    s += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+  }
+  return s;
+}
+
+function isoFromNow(deltaMs) {
+  return new Date(Date.now() + deltaMs).toISOString();
+}
+
+function parseIsoUtc(value) {
+  if (!value) return null;
+  let s = String(value).trim();
+  // Chuẩn hoá: nếu có dấu cách giữa ngày-giờ, đổi thành 'T'
+  s = s.replace(' ', 'T');
+  // Nếu chưa có timezone indicator, coi như UTC
+  if (!/Z$|[+-]\d{2}:?\d{2}$/.test(s)) s = s + 'Z';
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+}
+
+async function findUserByCode(env, code) {
+  if (!code) return null;
+  const row = await env.DB.prepare(
+    'SELECT code, team, folder, short_label, subtitle, is_active, notes, updated_at ' +
+    'FROM users WHERE code = ? AND is_active = 1 LIMIT 1'
+  ).bind(code).first();
+  return row ? rowToUser(row) : null;
+}
+
+async function createSession(env, user, request) {
+  const token = generateToken(SESSION_TOKEN_BYTES);
+  const ip = cleanText(getClientIp(request), 120);
+  const ua = cleanText(request.headers.get('user-agent'), 500);
+  const expires = isoFromNow(SESSION_TTL_MS);
+  await env.DB.prepare(
+    'INSERT INTO sessions (token, code, ip, user_agent, expires_at) VALUES (?, ?, ?, ?, ?)'
+  ).bind(token, user.code, ip, ua, expires).run();
+  return { token, expiresAt: expires };
+}
+
+async function destroySession(env, token) {
+  if (!token) return;
+  await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+}
+
+async function loadSession(env, token) {
+  if (!token) return null;
+  const row = await env.DB.prepare(
+    'SELECT token, code, ip, user_agent, expires_at FROM sessions WHERE token = ? LIMIT 1'
+  ).bind(token).first();
+  if (!row) return null;
+  const expiresMs = parseIsoUtc(row.expires_at);
+  if (row.expires_at) {
+    // eslint-disable-next-line no-console
+    console.log('loadSession debug', JSON.stringify({ token: row.token.slice(0,8), raw: row.expires_at, expiresMs, now: Date.now(), diff: expiresMs - Date.now() }));
+  }
+  if (!expiresMs || expiresMs < Date.now()) {
+    await destroySession(env, token);
+    return null;
+  }
+  return { token: row.token, code: row.code, ip: row.ip, ua: row.user_agent, expiresAt: row.expires_at, expiresMs };
+}
+
+function sessionFingerprint(request, ip, ua) {
+  return cleanText(ip, 120) + '|' + cleanText(ua, 500);
+}
+
+async function refreshSessionIfNeeded(env, session) {
+  const remaining = session.expiresMs - Date.now();
+  if (remaining > SESSION_REFRESH_WINDOW_MS) return session;
+  const newExpires = isoFromNow(SESSION_TTL_MS);
+  await env.DB.prepare(
+    "UPDATE sessions SET expires_at = ?, last_seen_at = datetime('now') WHERE token = ?"
+  ).bind(newExpires, session.token).run();
+  session.expiresAt = newExpires;
+  session.expiresMs = parseIsoUtc(newExpires);
+  return session;
+}
+
+function rowToUser(row) {
+  if (!row) return null;
+  return {
+    code: row.code,
+    team: row.team,
+    folder: row.folder,
+    shortLabel: row.short_label || row.team || row.code,
+    subtitle: row.subtitle || '',
+    isActive: Number(row.is_active) === 1,
+    notes: row.notes || '',
+    updatedAt: row.updated_at || ''
+  };
+}
+
+function userToProfile(user) {
+  if (!user) return null;
+  const folder = user.folder || 'main';
+  return {
+    userCode: user.code,
+    folder,
+    dataDir: 'data/' + folder,
+    displayName: user.team || user.code,
+    shortLabel: user.shortLabel || user.team || user.code,
+    subtitle: user.subtitle || ''
+  };
+}
+
+async function fetchActiveUsers(env) {
+  const result = await env.DB.prepare(
+    'SELECT code, team, folder, short_label, subtitle, is_active, notes, updated_at ' +
+    'FROM users WHERE is_active = 1 ORDER BY code ASC'
+  ).all();
+  const rows = (result && result.results) || [];
+  return rows.map(rowToUser);
 }
 
 function getClientIp(request) {
@@ -273,7 +394,7 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // Trang HTML xem log (mở root là có bảng luôn)
+    // Trang HTML xem log (v3-debug) (mở root là có bảng luôn)
     if (url.pathname === '/' || url.pathname === '/logs' || url.pathname === '/admin') {
       if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
       const data = await fetchLogsPage(env, {
@@ -299,9 +420,82 @@ export default {
       return json({ ok: true, ...data });
     }
 
+    if (url.pathname === '/api/users') {
+      if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
+      const includeInactive = url.searchParams.get('includeInactive') === '1';
+      const users = await fetchActiveUsers(env);
+      const filtered = includeInactive ? users : users.filter(u => u.isActive);
+      return json({ ok: true, count: filtered.length, users: filtered }, 200, {
+        'Cache-Control': 'public, max-age=60'
+      });
+    }
+
+    if (url.pathname === '/api/login') {
+      if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
+      try {
+        const payload = await request.json().catch(() => ({}));
+        const code = cleanText(payload.code, 80).toLowerCase();
+        if (!code) return json({ ok: false, error: 'Thiếu mã đăng nhập' }, 400);
+        const user = await findUserByCode(env, code);
+        if (!user) return json({ ok: false, error: 'Mã đăng nhập không hợp lệ' }, 401);
+        const session = await createSession(env, user, request);
+        return json({ ok: true, user, profile: userToProfile(user), ...session });
+      } catch (err) {
+        return json({ ok: false, error: 'Login lỗi: ' + (err && err.message ? err.message : String(err)) }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/session') {
+      if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
+      const auth = request.headers.get('authorization') || '';
+      const m = auth.match(/^Bearer\s+(.+)$/i);
+      const token = m ? m[1].trim() : null;
+      if (!token) return json({ ok: false, error: 'Thiếu token' }, 401);
+      const session = await loadSession(env, token);
+      if (!session) return json({ ok: false, error: 'Phiên hết hạn' }, 401);
+      const reqFp = sessionFingerprint(request, getClientIp(request), request.headers.get('user-agent'));
+      const sessFp = sessionFingerprint(request, session.ip, session.ua);
+      if (reqFp !== sessFp) {
+        await destroySession(env, token);
+        return json({ ok: false, error: 'Phiên không hợp lệ (IP/UA khác)' }, 401);
+      }
+      const refreshed = await refreshSessionIfNeeded(env, session);
+      const user = await findUserByCode(env, session.code);
+      if (!user) {
+        await destroySession(env, token);
+        return json({ ok: false, error: 'Tài khoản đã bị khoá' }, 401);
+      }
+      return json({ ok: true, user, profile: userToProfile(user), expiresAt: refreshed.expiresAt });
+    }
+
+    if (url.pathname === '/api/session/logout') {
+      if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
+      const auth = request.headers.get('authorization') || '';
+      const m = auth.match(/^Bearer\s+(.+)$/i);
+      const token = m ? m[1].trim() : null;
+      if (token) await destroySession(env, token);
+      return json({ ok: true });
+    }
+
+
     return json({ ok: false, error: 'Not found' }, 404);
   }
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

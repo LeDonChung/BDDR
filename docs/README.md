@@ -21,3 +21,4 @@ Mục lục tài liệu dự án. Tất cả file `.md` phục vụ phát triể
 
 - Tên file dùng kebab-case, chữ thường, không dấu, không viết hoa trừ khi cần thiết.
 - Mỗi file là một chủ đề độc lập, liên kết chéo bằng đường dẫn tương đối.
+

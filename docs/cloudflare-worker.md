@@ -1,6 +1,6 @@
 ﻿# BDDR Tong Viewer – Tài liệu Cloudflare Worker & D1
 
-Tài liệu này tổng hợp mọi thứ liên quan tới việc tích hợp ghi log đăng nhập bằng **Cloudflare Worker + Cloudflare D1** cho repo **BDDR-Tong-Viewer**.
+Tài liệu này tổng hợp mọi thứ liên quan tới việc tích hợp **ghi log đăng nhập + quản lý danh sách user/đội** bằng **Cloudflare Worker + Cloudflare D1** cho repo **BDDR-Tong-Viewer**.
 
 ## 1. Giới thiệu Cloudflare Worker
 
@@ -312,7 +312,104 @@ npx wrangler d1 execute bddr_logs --command "SELECT time, account, ip, browser, 
 | `accuracy` | Độ chính xác GPS |
 | `location_status` | available / unavailable |
 
-## 11. Đề xuất mở rộng sau này
+## 11. Bảng `users` và API `/api/users`
+
+Bảng `users` lưu danh sách mã đăng nhập và ánh xạ tới folder dữ liệu (local + R2). Có thể sửa trực tiếp trong D1 mà không cần đẩy code.
+
+### Cấu trúc bảng
+
+| Cột | Kiểu | Mô tả |
+| --- | --- | --- |
+| `code` | TEXT PRIMARY KEY | Mã đăng nhập, ví dụ `cty75doi01`, `doankinhtecty75` |
+| `team` | TEXT NOT NULL | Tên đội / đơn vị, ví dụ `Đội 1`, `Công ty 75` |
+| `folder` | TEXT NOT NULL | Folder dữ liệu, ví dụ `doi01`, `main` |
+| `short_label` | TEXT | Tên ngắn hiển thị |
+| `subtitle` | TEXT | Mô tả phụ cho header |
+| `is_active` | INTEGER NOT NULL DEFAULT 1 | 1 = cho phép đăng nhập, 0 = tạm khoá |
+| `notes` | TEXT | Ghi chú nội bộ |
+| `updated_at` | TEXT NOT NULL DEFAULT (datetime(''now'')) | Thời điểm cập nhật |
+
+### Ánh xạ folder
+
+Web tự build đường dẫn dữ liệu từ `folder`:
+
+- Local: `data/<folder>/BDDR.pmtiles` (vd `data/doi01/BDDR.pmtiles`).
+- R2: `<R2_BASE>/capstone/bddr/<folder>/BDDR.pmtiles` (vd `https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/capstone/bddr/doi01/BDDR.pmtiles`).
+
+Đổi `folder` của một user là web sẽ load PMTiles ở folder khác, không cần đụng code.
+
+### Seed dữ liệu mẫu
+
+File `worker/seed-users.sql` chèn sẵn 1 tài khoản tổng (`doankinhtecty75`) và 99 đội (`cty75doi1` … `cty75doi99`, folder `doi01` … `doi99`). Chạy 1 lần sau khi tạo bảng:
+
+```powershell
+npx wrangler d1 execute bddr_logs --file worker/seed-users.sql --remote
+```
+
+### API
+
+- `GET /api/users` — trả về JSON `{ ok, count, users }`. Chỉ gồm user đang `is_active = 1`. Cache 60s ở Cloudflare.
+- `GET /api/users?includeInactive=1` — bao gồm cả user tạm khoá (dùng cho dashboard admin sau này).
+
+### Thêm / sửa user
+
+Dùng Wrangler SQL trực tiếp (không cần đẩy code):
+
+```powershell
+npx wrangler d1 execute bddr_logs --command "INSERT INTO users (code, team, folder) VALUES ('cty75doi100', 'Đội 100', 'doi100')" --remote
+
+npx wrangler d1 execute bddr_logs --command "UPDATE users SET team = 'Đội 1 - Tây Nguyên', folder = 'doi01_tay_nguyen' WHERE code = 'cty75doi1'" --remote
+
+npx wrangler d1 execute bddr_logs --command "UPDATE users SET is_active = 0 WHERE code = 'cty75doi5'" --remote
+```
+
+Web sẽ nhận thay đổi trong vòng 5 phút (cache localStorage TTL) hoặc ngay lần đăng nhập kế tiếp.
+
+## 12. Phiên đăng nhập (sessions)
+
+Thay vì lưu danh sách user + cache phía client, Worker cấp **session token** có TTL 60 phút, tự gia hạn khi user còn dùng.
+
+### Bảng `sessions`
+
+| Cột | Kiểu | Mô tả |
+| --- | --- | --- |
+| `token` | TEXT PRIMARY KEY | 32 hex char ngẫu nhiên |
+| `code` | TEXT NOT NULL | Mã user (FK logic tới `users.code`) |
+| `ip` | TEXT | IP lúc đăng nhập |
+| `user_agent` | TEXT | UA lúc đăng nhập |
+| `created_at` | TEXT NOT NULL DEFAULT (datetime(''now'')) | |
+| `expires_at` | TEXT NOT NULL | ISO UTC, mặc định +60 phút |
+| `last_seen_at` | TEXT | Lần cuối verify (dùng cho sliding TTL) |
+
+### API
+
+| Method + Path | Mô tả |
+| --- | --- |
+| `POST /api/login` | body `{"code":"..."}` → trả `{ ok, user, profile, token, expiresAt }` |
+| `GET /api/session` | header `Authorization: Bearer <token>` → trả `{ ok, user, profile, expiresAt }` nếu còn hạn |
+| `POST /api/session/logout` | header `Authorization: Bearer <token>` → huỷ session |
+
+### Quy tắc bảo mật
+
+- `GET /api/session` đối chiếu IP + User-Agent với giá trị lưu lúc login; nếu khác → huỷ session (chống token lộ sang thiết bị khác).
+- Nếu còn dưới 10 phút trước khi hết hạn, server tự `UPDATE expires_at = now + 60 phút` (sliding window).
+- Token random 16 byte hex, không chứa thông tin nhạy cảm.
+
+### Luồng phía client (`script.js`)
+
+1. Khi mở web: nếu có token trong `localStorage[bddr-session-token]` thì gọi `GET /api/session` để khôi phục đăng nhập.
+2. Khi submit form: gọi `POST /api/login`, lưu token vào localStorage.
+3. Cứ 5 phút `setInterval` gọi `GET /api/session` để giữ phiên sống + kiểm tra còn hạn không.
+4. Khi logout: gọi `POST /api/session/logout`, xoá token, reload trang.
+
+### Dọn dẹp session hết hạn
+
+Cloudflare Workers không có cron miễn phí. Có thể dùng:
+
+- Cloudflare Workers Cron Trigger (free tier 5 lần/ngày) — ví dụ mỗi 6 giờ xoá `WHERE expires_at < datetime(''now'')`.
+- Hoặc lazy: các API `loadSession` đã tự xoá session hết hạn khi truy cập.
+
+## 13. Đề xuất mở rộng sau này
 
 - Tạo API `/api/login-log/recent` để dashboard xem các lần đăng nhập gần nhất.
 - Thêm rate limit bằng Cloudflare Rate Limiting Rules.
@@ -320,3 +417,5 @@ npx wrangler d1 execute bddr_logs --command "SELECT time, account, ip, browser, 
 - Đẩy log cũ hơn sang R2 / KV để giảm chi phí D1.
 - Cron Trigger dọn log cũ trên 90 ngày.
 - Workers AI gán nhãn log (phát hiện bất thường) – free tier.
+
+
