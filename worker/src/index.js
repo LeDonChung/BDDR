@@ -104,6 +104,615 @@ async function findUserByCode(env, code) {
   return row ? rowToUser(row) : null;
 }
 
+async function findAnyUserByCode(env, code) {
+  if (!code) return null;
+  const row = await env.DB.prepare(
+    'SELECT code, team, folder, short_label, subtitle, is_active, notes, updated_at ' +
+    'FROM users WHERE code = ? LIMIT 1'
+  ).bind(code).first();
+  return row ? rowToUser(row) : null;
+}
+
+async function listAllUsers(env) {
+  const result = await env.DB.prepare(
+    'SELECT code, team, folder, short_label, subtitle, is_active, notes, updated_at ' +
+    'FROM users ORDER BY code ASC'
+  ).all();
+  return ((result && result.results) || []).map(rowToUser);
+}
+
+async function createUser(env, payload) {
+  const code = cleanText(payload.code, 80).toLowerCase();
+  if (!code) throw new Error('Thiếu mã');
+  if (!/^[a-z0-9_-]{1,80}$/.test(code)) throw new Error('Mã không hợp lệ (chỉ a-z, 0-9, _, -)');
+  const team = cleanText(payload.team, 120);
+  const folder = cleanText(payload.folder, 80);
+  if (!team) throw new Error('Thiếu tên đội');
+  if (!folder) throw new Error('Thiếu folder');
+  const shortLabel = cleanText(payload.shortLabel || team, 120);
+  const subtitle = cleanText(payload.subtitle || '', 200);
+  const isActive = payload.isActive === false || payload.isActive === 0 || payload.isActive === '0' ? 0 : 1;
+  const notes = cleanText(payload.notes || '', 500);
+  await env.DB.prepare(
+    "INSERT INTO users (code, team, folder, short_label, subtitle, is_active, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+  ).bind(code, team, folder, shortLabel, subtitle, isActive, notes).run();
+  return await findAnyUserByCode(env, code);
+}
+
+async function updateUser(env, code, payload) {
+  const normalized = cleanText(code, 80).toLowerCase();
+  const current = await findAnyUserByCode(env, normalized);
+  if (!current) throw new Error('Không tìm thấy user');
+  const team = payload.team !== undefined ? cleanText(payload.team, 120) : current.team;
+  const folder = payload.folder !== undefined ? cleanText(payload.folder, 80) : current.folder;
+  if (!team) throw new Error('Thiếu tên đội');
+  if (!folder) throw new Error('Thiếu folder');
+  const shortLabel = payload.shortLabel !== undefined ? cleanText(payload.shortLabel, 120) : current.shortLabel;
+  const subtitle = payload.subtitle !== undefined ? cleanText(payload.subtitle, 200) : current.subtitle;
+  const notes = payload.notes !== undefined ? cleanText(payload.notes, 500) : current.notes;
+  let isActive = current.isActive ? 1 : 0;
+  if (payload.isActive !== undefined) {
+    isActive = payload.isActive === false || payload.isActive === 0 || payload.isActive === '0' ? 0 : 1;
+  }
+  await env.DB.prepare(
+    "UPDATE users SET team = ?, folder = ?, short_label = ?, subtitle = ?, is_active = ?, notes = ?, updated_at = datetime('now') WHERE code = ?"
+  ).bind(team, folder, shortLabel, subtitle, isActive, notes, normalized).run();
+  return await findAnyUserByCode(env, normalized);
+}
+
+async function deleteUser(env, code) {
+  const normalized = cleanText(code, 80).toLowerCase();
+  if (normalized === 'doankinhtecty75') {
+    throw new Error('Không thể xoá tài khoản tổng');
+  }
+  // Xoá sessions của user trước
+  await env.DB.prepare('DELETE FROM sessions WHERE code = ?').bind(normalized).run();
+  await env.DB.prepare('DELETE FROM users WHERE code = ?').bind(normalized).run();
+  return { ok: true, code: normalized };
+}
+
+async function listSessions(env, code) {
+  const result = await env.DB.prepare(
+    'SELECT token, code, ip, user_agent, created_at, expires_at, last_seen_at ' +
+    'FROM sessions WHERE code = ? ORDER BY created_at DESC LIMIT 200'
+  ).bind(code).all();
+  return ((result && result.results) || []).map(r => ({
+    token: r.token.slice(0, 8) + '…' + r.token.slice(-4),
+    code: r.code,
+    ip: r.ip || '',
+    userAgent: r.user_agent || '',
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    lastSeenAt: r.last_seen_at || ''
+  }));
+}
+
+async function destroySessionsByCode(env, code) {
+  const normalized = cleanText(code, 80).toLowerCase();
+  const result = await env.DB.prepare('DELETE FROM sessions WHERE code = ?').bind(normalized).run();
+  return { ok: true, code: normalized, deleted: (result && result.meta && result.meta.changes) || 0 };
+}
+
+function isAdminUser(user) {
+  return user && user.code === 'doankinhtecty75';
+}
+
+async function getUserFromRequest(request, env) {
+  const auth = request.headers.get('authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  const session = await loadSession(env, m[1].trim());
+  if (!session) return null;
+  return await findAnyUserByCode(env, session.code);
+}
+
+async function requireAdmin(request, env) {
+  const user = await getUserFromRequest(request, env);
+  if (!user) return { error: 'Cần đăng nhập admin', status: 401 };
+  if (!isAdminUser(user)) return { error: 'Chỉ tài khoản tổng mới có quyền admin', status: 403 };
+  return { user };
+}
+
+function renderAdminPage() {
+  return `<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BDDR Tong – Admin</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f4f6f8; --card:#fff; --line:#e4e7eb; --ink:#1f2933; --muted:#52606d; --pri:#1f6feb; --pri-ink:#fff; --danger:#b91c1c; --ok:#03543f; --warn:#92400e; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--ink); }
+  header.top { display:flex; align-items:center; gap:12px; padding:12px 20px; background:#0f172a; color:#fff; }
+  header.top h1 { margin:0; font-size:1.1rem; font-weight:600; }
+  header.top .right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  header.top a, header.top button { color:#cbd5e1; background:transparent; border:1px solid #334155; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:.85rem; text-decoration:none; }
+  header.top a:hover, header.top button:hover { background:#1e293b; }
+  main { max-width: 1280px; margin: 16px auto; padding: 0 16px; }
+  .login-card { max-width: 420px; margin: 80px auto; padding: 28px; background: var(--card); border:1px solid var(--line); border-radius: 12px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
+  .login-card h2 { margin: 0 0 8px; font-size: 1.2rem; }
+  .login-card p { margin: 0 0 16px; color: var(--muted); font-size: .9rem; }
+  .login-card input { width: 100%; padding: 8px 10px; border: 1px solid #cbd2d9; border-radius: 6px; font-size: 1rem; }
+  .login-card button { width: 100%; margin-top: 12px; padding: 8px 12px; background: var(--pri); color: var(--pri-ink); border: 0; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+  .login-card .err { color: var(--danger); margin-top: 8px; font-size: .85rem; min-height: 1.2em; }
+  nav.tabs { display:flex; gap:4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  nav.tabs button { padding: 8px 16px; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; font-size: .95rem; color: var(--muted); }
+  nav.tabs button.active { color: var(--pri); border-bottom-color: var(--pri); font-weight: 600; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  .toolbar { display:flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .toolbar input.search { flex: 1; min-width: 200px; padding: 7px 10px; border: 1px solid #cbd2d9; border-radius: 6px; }
+  .toolbar button { padding: 6px 12px; background: var(--pri); color: var(--pri-ink); border: 0; border-radius: 6px; cursor: pointer; font-size: .9rem; }
+  .toolbar button.ghost { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  .toolbar button.danger { background: var(--danger); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: .9rem; vertical-align: top; }
+  th { background: #eef2f6; font-weight: 600; position: sticky; top: 0; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  tr:hover td { background: #eef2f6; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .75rem; font-weight: 500; }
+  .pill.on { background: #def7ec; color: var(--ok); }
+  .pill.off { background: #fde8e8; color: var(--danger); }
+  .row-actions { display:flex; gap: 4px; }
+  .row-actions button { padding: 3px 8px; font-size: .8rem; background: var(--card); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+  .row-actions button.danger { color: var(--danger); border-color: #fca5a5; }
+  .row-actions button:hover { background: #eef2f6; }
+  /* Modal */
+  .modal-back { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .modal-back.open { display: flex; }
+  .modal { background: var(--card); border-radius: 12px; max-width: 520px; width: 100%; padding: 20px; box-shadow: 0 10px 40px rgba(15,23,42,.2); }
+  .modal h3 { margin: 0 0 12px; font-size: 1.1rem; }
+  .modal label { display: block; font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  .modal input, .modal textarea { width: 100%; padding: 7px 10px; border: 1px solid #cbd2d9; border-radius: 6px; font-size: .95rem; font-family: inherit; }
+  .modal .row { display:flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+  .modal button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); cursor: pointer; font-size: .9rem; }
+  .modal button.primary { background: var(--pri); color: var(--pri-ink); border-color: var(--pri); }
+  .modal button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: #0f172a; color: #fff; padding: 10px 16px; border-radius: 8px; opacity: 0; transform: translateY(20px); transition: all .2s; z-index: 200; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { background: var(--danger); }
+  .toast.ok { background: var(--ok); }
+  code { background: #eef2f6; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --ink:#e2e8f0; --muted:#94a3b8; }
+    th { background: #243349; }
+    tr:nth-child(even) td { background: #18223a; }
+    tr:hover td { background: #243349; }
+    code { background: #243349; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>🛠 BDDR Tong — Admin</h1>
+  <div class="right">
+    <span id="who" style="font-size:.85rem;color:#94a3b8"></span>
+    <a href="/" target="_blank">Xem log ↗</a>
+    <button id="logout">Đăng xuất</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login card (hiện khi chưa có token) -->
+  <div id="loginCard" class="login-card">
+    <h2>Đăng nhập admin</h2>
+    <p>Chỉ tài khoản <code>doankinhtecty75</code> mới có quyền truy cập trang này.</p>
+    <input id="loginCode" type="text" placeholder="Nhập mã đăng nhập" autocomplete="off" />
+    <button id="loginBtn">Đăng nhập</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+
+  <!-- App (hiện khi đã đăng nhập admin) -->
+  <div id="app" style="display:none">
+    <nav class="tabs">
+      <button data-tab="users" class="active">👥 Users</button>
+      <button data-tab="sessions">🔐 Sessions</button>
+      <button data-tab="logs">📋 Logs theo user</button>
+    </nav>
+
+    <!-- USERS -->
+    <section id="panel-users" class="panel active">
+      <div class="toolbar">
+        <input class="search" id="userSearch" placeholder="Tìm theo mã, tên đội, folder..." />
+        <button id="userAdd" class="ghost">+ Thêm user</button>
+        <button id="userReload" class="ghost">↻ Tải lại</button>
+      </div>
+      <table id="userTable">
+        <thead><tr>
+          <th>Mã</th><th>Tên đội</th><th>Folder</th><th>Short label</th><th>Trạng thái</th><th>Cập nhật</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- SESSIONS -->
+    <section id="panel-sessions" class="panel">
+      <div class="toolbar">
+        <label style="font-size:.85rem;color:var(--muted)">User:
+          <select id="sessSelect" style="margin-left:6px;padding:6px 8px;border:1px solid #cbd2d9;border-radius:6px"></select>
+        </label>
+        <button id="sessReload" class="ghost">↻ Tải lại</button>
+        <button id="sessKill" class="danger">✕ Huỷ tất cả session của user này</button>
+      </div>
+      <table id="sessTable">
+        <thead><tr>
+          <th>Token</th><th>IP</th><th>User-Agent</th><th>Tạo</th><th>Hết hạn</th><th>Lần cuối</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- LOGS -->
+    <section id="panel-logs" class="panel">
+      <div class="toolbar">
+        <label style="font-size:.85rem;color:var(--muted)">User:
+          <select id="logSelect" style="margin-left:6px;padding:6px 8px;border:1px solid #cbd2d9;border-radius:6px"></select>
+        </label>
+        <label style="font-size:.85rem;color:var(--muted)">Số dòng:
+          <input id="logLimit" type="number" min="1" max="500" value="100" style="margin-left:6px;padding:6px 8px;border:1px solid #cbd2d9;border-radius:6px;width:80px" />
+        </label>
+        <button id="logReload" class="ghost">↻ Tải lại</button>
+      </div>
+      <table id="logTable">
+        <thead><tr>
+          <th>#</th><th>Thời gian</th><th>IP</th><th>Trình duyệt</th><th>HĐH</th><th>Ngôn ngữ</th><th>Tọa độ</th><th>Trạng thái</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<!-- Modal edit/add user -->
+<div class="modal-back" id="modal">
+  <div class="modal">
+    <h3 id="modalTitle">Thêm user</h3>
+    <form id="userForm">
+      <label>Mã đăng nhập *<input name="code" required pattern="[a-z0-9_-]{1,80}" /></label>
+      <label>Tên đội / đơn vị *<input name="team" required maxlength="120" /></label>
+      <label>Folder dữ liệu *<input name="folder" required maxlength="80" placeholder="vd: doi01, main" /></label>
+      <label>Short label<input name="shortLabel" maxlength="120" /></label>
+      <label>Subtitle<input name="subtitle" maxlength="200" /></label>
+      <label>Ghi chú<textarea name="notes" rows="2" maxlength="500"></textarea></label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:12px">
+        <input type="checkbox" name="isActive" checked /> Đang hoạt động
+      </label>
+      <div class="row">
+        <button type="button" data-close>Hủy</button>
+        <button type="submit" class="primary" id="modalSave">Lưu</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BASE = location.origin;
+const TOKEN_KEY = 'bddr-admin-token';
+let adminToken = localStorage.getItem(TOKEN_KEY) || null;
+let allUsers = [];
+
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+function toast(msg, kind) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (kind || '');
+  setTimeout(() => t.className = 'toast ' + (kind || ''), 2200);
+}
+
+async function api(path, options) {
+  options = options || {};
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+  if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+  const r = await fetch(BASE + path, Object.assign({}, options, { headers }));
+  const ct = r.headers.get('content-type') || '';
+  const body = ct.includes('application/json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
+  return body;
+}
+
+function setLoggedInUI(token, userCode) {
+  adminToken = token;
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  $('#loginCard').style.display = 'none';
+  $('#app').style.display = '';
+  $('#who').textContent = '👤 ' + userCode;
+  loadAll();
+}
+
+function setLoggedOutUI() {
+  adminToken = null;
+  localStorage.removeItem(TOKEN_KEY);
+  $('#loginCard').style.display = '';
+  $('#app').style.display = 'none';
+  $('#who').textContent = '';
+}
+
+async function trySession() {
+  if (!adminToken) return setLoggedOutUI();
+  try {
+    const r = await api('/api/session');
+    if (r.user && r.user.code === 'doankinhtecty75') {
+      setLoggedInUI(adminToken, r.user.code);
+    } else {
+      toast('Tài khoản không có quyền admin', 'err');
+      setLoggedOutUI();
+    }
+  } catch (err) {
+    setLoggedOutUI();
+  }
+}
+
+async function doLogin() {
+  $('#loginErr').textContent = '';
+  const code = $('#loginCode').value.trim();
+  if (!code) { $('#loginErr').textContent = 'Nhập mã'; return; }
+  try {
+    const r = await fetch(BASE + '/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const body = await r.json();
+    if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+    if (body.user.code !== 'doankinhtecty75') {
+      $('#loginErr').textContent = 'Chỉ tài khoản tổng mới có quyền admin';
+      // vẫn setLoggedInUI để user thấy web vẫn dùng được session, nhưng API admin sẽ 403
+      setLoggedInUI(body.token, body.user.code);
+      return;
+    }
+    setLoggedInUI(body.token, body.user.code);
+  } catch (err) {
+    $('#loginErr').textContent = err.message;
+  }
+}
+
+async function loadAll() {
+  await Promise.all([loadUsers(), populateSelects()]);
+}
+
+async function loadUsers() {
+  try {
+    const r = await api('/api/admin/users');
+    allUsers = r.users || [];
+    renderUsers();
+  } catch (err) {
+    toast('Lỗi tải users: ' + err.message, 'err');
+  }
+}
+
+function renderUsers() {
+  const q = ($('#userSearch').value || '').toLowerCase();
+  const tb = $('#userTable tbody');
+  const list = allUsers.filter(u =>
+    !q || (u.code + ' ' + u.team + ' ' + u.folder + ' ' + (u.shortLabel || '')).toLowerCase().includes(q)
+  );
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="empty">Không có user nào</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(u =>
+    '<tr>' +
+    '<td><code>' + esc(u.code) + '</code></td>' +
+    '<td>' + esc(u.team) + '</td>' +
+    '<td><code>' + esc(u.folder) + '</code></td>' +
+    '<td>' + esc(u.shortLabel || '') + '</td>' +
+    '<td><span class="pill ' + (u.isActive ? 'on' : 'off') + '">' + (u.isActive ? 'active' : 'inactive') + '</span></td>' +
+    '<td style="font-size:.8rem;color:var(--muted)">' + esc(u.updatedAt || '') + '</td>' +
+    '<td><div class="row-actions">' +
+      '<button data-act="edit" data-code="' + esc(u.code) + '">Sửa</button>' +
+      '<button data-act="toggle" data-code="' + esc(u.code) + '" data-active="' + (u.isActive ? '1' : '0') + '">' + (u.isActive ? 'Khoá' : 'Mở') + '</button>' +
+      '<button data-act="delete" data-code="' + esc(u.code) + '" class="danger">Xoá</button>' +
+    '</div></td>' +
+    '</tr>'
+  ).join('');
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+async function populateSelects() {
+  const opts = '<option value="">-- chọn user --</option>' +
+    allUsers.map(u => '<option value="' + esc(u.code) + '">' + esc(u.code) + ' — ' + esc(u.team) + '</option>').join('');
+  $('#sessSelect').innerHTML = opts;
+  $('#logSelect').innerHTML = opts;
+}
+
+function openModal(user) {
+  $('#modalTitle').textContent = user ? 'Sửa user: ' + user.code : 'Thêm user mới';
+  const f = $('#userForm');
+  f.reset();
+  f.elements.code.disabled = !!user;
+  if (user) {
+    f.elements.code.value = user.code || '';
+    f.elements.team.value = user.team || '';
+    f.elements.folder.value = user.folder || '';
+    f.elements.shortLabel.value = user.shortLabel || '';
+    f.elements.subtitle.value = user.subtitle || '';
+    f.elements.notes.value = user.notes || '';
+    f.elements.isActive.checked = !!user.isActive;
+  }
+  f.dataset.editing = user ? user.code : '';
+  $('#modal').classList.add('open');
+}
+
+function closeModal() {
+  $('#modal').classList.remove('open');
+  $('#userForm').dataset.editing = '';
+}
+
+async function saveUser(ev) {
+  ev.preventDefault();
+  const f = ev.target;
+  const editing = f.dataset.editing;
+  const data = {
+    code: f.elements.code.value.trim().toLowerCase(),
+    team: f.elements.team.value.trim(),
+    folder: f.elements.folder.value.trim(),
+    shortLabel: f.elements.shortLabel.value.trim(),
+    subtitle: f.elements.subtitle.value.trim(),
+    notes: f.elements.notes.value.trim(),
+    isActive: f.elements.isActive.checked
+  };
+  try {
+    if (editing) {
+      await api('/api/users?code=' + encodeURIComponent(editing), { method: 'PUT', body: JSON.stringify(data) });
+      toast('Đã cập nhật ' + editing, 'ok');
+    } else {
+      await api('/api/users', { method: 'POST', body: JSON.stringify(data) });
+      toast('Đã thêm ' + data.code, 'ok');
+    }
+    closeModal();
+    loadUsers();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function deleteUser(code) {
+  if (code === 'doankinhtecty75') { toast('Không thể xoá tài khoản tổng', 'err'); return; }
+  if (!confirm('Xoá user ' + code + ' và toàn bộ session của user này? Không thể hoàn tác.')) return;
+  try {
+    await api('/api/users?code=' + encodeURIComponent(code), { method: 'DELETE' });
+    toast('Đã xoá ' + code, 'ok');
+    loadUsers();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function toggleUser(code, currentlyActive) {
+  try {
+    await api('/api/users?code=' + encodeURIComponent(code), {
+      method: 'PUT',
+      body: JSON.stringify({ isActive: !currentlyActive })
+    });
+    toast('Đã cập nhật trạng thái ' + code, 'ok');
+    loadUsers();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function loadSessions() {
+  const code = $('#sessSelect').value;
+  if (!code) { $('#sessTable tbody').innerHTML = '<tr><td colspan="6" class="empty">Chọn user để xem session</td></tr>'; return; }
+  try {
+    const r = await api('/api/admin/sessions?code=' + encodeURIComponent(code));
+    const list = r.sessions || [];
+    if (!list.length) { $('#sessTable tbody').innerHTML = '<tr><td colspan="6" class="empty">User này chưa có session</td></tr>'; return; }
+    $('#sessTable tbody').innerHTML = list.map(s =>
+      '<tr>' +
+      '<td><code style="font-size:.75rem">' + esc(s.token) + '</code></td>' +
+      '<td>' + esc(s.ip) + '</td>' +
+      '<td style="max-width:300px;word-break:break-all;font-size:.8rem">' + esc(s.userAgent) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(s.createdAt) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(s.expiresAt) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(s.lastSeenAt) + '</td>' +
+      '</tr>'
+    ).join('');
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function killSessions() {
+  const code = $('#sessSelect').value;
+  if (!code) return;
+  if (!confirm('Huỷ tất cả session đang hoạt động của ' + code + '? Họ sẽ bị đăng xuất ngay.')) return;
+  try {
+    const r = await api('/api/admin/sessions/kill', { method: 'POST', body: JSON.stringify({ code }) });
+    toast('Đã huỷ ' + r.deleted + ' session của ' + code, 'ok');
+    loadSessions();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function loadLogs() {
+  const code = $('#logSelect').value;
+  if (!code) { $('#logTable tbody').innerHTML = '<tr><td colspan="8" class="empty">Chọn user để xem log</td></tr>'; return; }
+  const limit = Math.min(500, Math.max(1, parseInt($('#logLimit').value) || 100));
+  try {
+    // Dùng endpoint JSON sẵn có
+    const r = await api('/api/login-log/recent?account=' + encodeURIComponent(code) + '&pageSize=' + limit);
+    const list = r.rows || [];
+    if (!list.length) { $('#logTable tbody').innerHTML = '<tr><td colspan="8" class="empty">User này chưa có log</td></tr>'; return; }
+    $('#logTable tbody').innerHTML = list.map(row =>
+      '<tr>' +
+      '<td>' + esc(row.id) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(row.time) + '</td>' +
+      '<td>' + esc(row.ip) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(row.browser) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(row.platform) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(row.language) + '</td>' +
+      '<td style="font-size:.8rem">' + (row.latitude != null ? esc(row.latitude.toFixed(5)) + ', ' + esc(row.longitude.toFixed(5)) : '') + '</td>' +
+      '<td><span class="pill ' + (row.location_status === 'available' ? 'on' : 'off') + '">' + esc(row.location_status) + '</span></td>' +
+      '</tr>'
+    ).join('');
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('#loginBtn').addEventListener('click', doLogin);
+  $('#loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  $('#logout').addEventListener('click', async () => {
+    try { await api('/api/session/logout', { method: 'POST' }); } catch (e) {}
+    setLoggedOutUI();
+  });
+
+  $$('nav.tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $$('nav.tabs button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      $$('.panel').forEach(p => p.classList.remove('active'));
+      const id = 'panel-' + btn.dataset.tab;
+      $('#' + id).classList.add('active');
+      if (btn.dataset.tab === 'sessions') loadSessions();
+      if (btn.dataset.tab === 'logs') loadLogs();
+    });
+  });
+
+  $('#userSearch').addEventListener('input', renderUsers);
+  $('#userReload').addEventListener('click', loadUsers);
+  $('#userAdd').addEventListener('click', () => openModal(null));
+  $('#userTable').addEventListener('click', ev => {
+    const btn = ev.target.closest('button');
+    if (!btn) return;
+    const code = btn.dataset.code;
+    if (btn.dataset.act === 'edit') {
+      const u = allUsers.find(x => x.code === code);
+      if (u) openModal(u);
+    } else if (btn.dataset.act === 'delete') {
+      deleteUser(code);
+    } else if (btn.dataset.act === 'toggle') {
+      toggleUser(code, btn.dataset.active === '1');
+    }
+  });
+
+  $('#sessSelect').addEventListener('change', loadSessions);
+  $('#sessReload').addEventListener('click', loadSessions);
+  $('#sessKill').addEventListener('click', killSessions);
+
+  $('#logSelect').addEventListener('change', loadLogs);
+  $('#logLimit').addEventListener('change', loadLogs);
+  $('#logReload').addEventListener('click', loadLogs);
+
+  $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+  $('#userForm').addEventListener('submit', saveUser);
+
+  trySession();
+});
+</script>
+</body>
+</html>`;
+}
+
 async function createSession(env, user, request) {
   const token = generateToken(SESSION_TOKEN_BYTES);
   const ip = cleanText(getClientIp(request), 120);
@@ -394,8 +1003,8 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // Trang HTML xem log (v3-debug) (mở root là có bảng luôn)
-    if (url.pathname === '/' || url.pathname === '/logs' || url.pathname === '/admin') {
+    // Trang xem log HTML (mở root hoặc /logs là có bảng)
+    if (url.pathname === '/' || url.pathname === '/logs') {
       if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
       const data = await fetchLogsPage(env, {
         page: parsePage(url.searchParams.get('page')),
@@ -403,6 +1012,12 @@ export default {
         account: cleanText(url.searchParams.get('account'), 80) || null
       });
       return html(renderLogsTable(data, { account: url.searchParams.get('account') || '' }));
+    }
+
+    // Trang admin SPA
+    if (url.pathname === '/admin') {
+      if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
+      return html(renderAdminPage());
     }
 
     if (url.pathname === '/api/login-log') {
@@ -421,13 +1036,78 @@ export default {
     }
 
     if (url.pathname === '/api/users') {
+      // GET công khai cho client: chỉ trả user active
+      if (request.method === 'GET') {
+        const includeInactive = url.searchParams.get('includeInactive') === '1';
+        const users = await fetchActiveUsers(env);
+        const filtered = includeInactive ? users : users.filter(u => u.isActive);
+        return json({ ok: true, count: filtered.length, users: filtered }, 200, {
+          'Cache-Control': 'public, max-age=60'
+        });
+      }
+      // POST/PUT/DELETE yêu cầu admin session
+      if (request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE') {
+        const adminCheck = await requireAdmin(request, env);
+        if (adminCheck.error) return json({ ok: false, error: adminCheck.error }, adminCheck.status);
+        try {
+          const payload = await request.json().catch(() => ({}));
+          if (request.method === 'POST') {
+            const user = await createUser(env, payload);
+            return json({ ok: true, user });
+          }
+          if (request.method === 'PUT') {
+            const code = url.searchParams.get('code') || payload.code;
+            if (!code) return json({ ok: false, error: 'Thiếu code trong query/body' }, 400);
+            const user = await updateUser(env, code, payload);
+            return json({ ok: true, user });
+          }
+          if (request.method === 'DELETE') {
+            const code = url.searchParams.get('code') || payload.code;
+            if (!code) return json({ ok: false, error: 'Thiếu code' }, 400);
+            const result = await deleteUser(env, code);
+            return json(result);
+          }
+        } catch (err) {
+          return json({ ok: false, error: err.message || String(err) }, 400);
+        }
+      }
+      return json({ ok: false, error: 'Method not allowed' }, 405);
+    }
+
+    // Admin: danh sách tất cả user (kể cả đã khoá)
+    if (url.pathname === '/api/admin/users') {
       if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
-      const includeInactive = url.searchParams.get('includeInactive') === '1';
-      const users = await fetchActiveUsers(env);
-      const filtered = includeInactive ? users : users.filter(u => u.isActive);
-      return json({ ok: true, count: filtered.length, users: filtered }, 200, {
-        'Cache-Control': 'public, max-age=60'
-      });
+      const adminCheck = await requireAdmin(request, env);
+      if (adminCheck.error) return json({ ok: false, error: adminCheck.error }, adminCheck.status);
+      const users = await listAllUsers(env);
+      return json({ ok: true, count: users.length, users });
+    }
+
+    // Admin: danh sách sessions theo user
+    if (url.pathname === '/api/admin/sessions') {
+      if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
+      const adminCheck = await requireAdmin(request, env);
+      if (adminCheck.error) return json({ ok: false, error: adminCheck.error }, adminCheck.status);
+      const code = url.searchParams.get('code');
+      if (!code) return json({ ok: false, error: 'Thiếu code' }, 400);
+      const sessions = await listSessions(env, code);
+      return json({ ok: true, count: sessions.length, sessions });
+    }
+
+    // Admin: xoá toàn bộ session của 1 user
+    if (url.pathname === '/api/admin/sessions/kill') {
+      if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
+      const adminCheck = await requireAdmin(request, env);
+      if (adminCheck.error) return json({ ok: false, error: adminCheck.error }, adminCheck.status);
+      try {
+        const payload = await request.json().catch(() => ({}));
+        const code = payload.code;
+        if (!code) return json({ ok: false, error: 'Thiếu code' }, 400);
+        const result = await destroySessionsByCode(env, code);
+        return json(result);
+      } catch (err) {
+        return json({ ok: false, error: err.message || String(err) }, 400);
+      }
     }
 
     if (url.pathname === '/api/login') {
@@ -481,6 +1161,10 @@ export default {
     return json({ ok: false, error: 'Not found' }, 404);
   }
 };
+
+
+
+
 
 
 
