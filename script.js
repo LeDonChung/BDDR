@@ -351,7 +351,7 @@ function bindLocateButton() {
   locateBtn.onclick = () => locateUser(true, { userInitiated: true, focusZoom: 17 });
 }
 
-function startAppForUser(loginCode) {
+async function startAppForUser(loginCode) {
   const normalized = normalizeLoginCode(loginCode);
   if (!allowedLoginCodes.has(normalized)) {
     throw new Error('Mã đăng nhập không hợp lệ');
@@ -375,11 +375,16 @@ function startAppForUser(loginCode) {
   initMap();
   bindLocateButton();
   startCompassOnAppOpen();
-  setTimeout(() => locateUser(!loadAppState()), 80);
-  if (typeof bootstrapApp._onboardReady === 'function') bootstrapApp._onboardReady();
+  const shouldPanToLocation = !loadAppState();
+  setTimeout(async () => {
+    const initialPosition = await locateUser(shouldPanToLocation, { userInitiated: true });
+    if (initialPosition && typeof bootstrapApp._onboardReady === 'function') {
+      bootstrapApp._onboardReady();
+    }
+  }, 80);
 }
 
-function onLoginSubmit(event) {
+async function onLoginSubmit(event) {
   event.preventDefault();
   const input = $('loginCodeInput');
   const code = normalizeLoginCode(input ? input.value : '');
@@ -391,7 +396,7 @@ function onLoginSubmit(event) {
 
   try {
     setLoginBusy(true, '');
-    startAppForUser(code);
+    await startAppForUser(code);
   } catch (err) {
     setLoginBusy(false, err.message || 'Không thể đăng nhập');
     if (input) input.focus();
@@ -661,7 +666,7 @@ async function bootstrapApp() {
   const savedUser = normalizeLoginCode(localStorage.getItem(AUTH_STORAGE_KEY));
   if (savedUser && allowedLoginCodes.has(savedUser)) {
     try {
-      startAppForUser(savedUser);
+      await startAppForUser(savedUser);
       return;
     } catch (err) {
       console.warn('Không thể khôi phục đăng nhập', err);
@@ -3017,7 +3022,7 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode, focusZo
     // glides to the latest position with effectively zero delay instead.
   } else if (pan) {
     const targetZoom = Number.isFinite(focusZoom) ? focusZoom : 15;
-    map.flyTo(latlng, Math.max(map.getZoom(), targetZoom), { animate: true, duration: 0.6 });
+    map.flyTo(latlng, targetZoom, { animate: true, duration: 0.6 });
   }
 }
 
@@ -3235,10 +3240,8 @@ function obStartFromWelcome() {
   setTimeout(() => obRunStep(startStep), 60);
 }
 function initOnboarding() {
-  if (readOnboarding()) {
-    obHide();
-    obWelcomeHide();
-  }
+  obHide();
+  obWelcomeHide();
   document.getElementById('onboardingStartBtn')?.addEventListener('click', obStartFromWelcome);
   document.getElementById('onboardingWelcomeSkipBtn')?.addEventListener('click', obCancel);
   document.getElementById('onboardingNextBtn')?.addEventListener('click', obNext);
