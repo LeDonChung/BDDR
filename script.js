@@ -49,6 +49,7 @@ const USE_R2_PMTILES = true;
 const BLOCK_DEVTOOLS_SHORTCUTS = true;
 const R2_PMTILES_BASE_URL = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr';
 const AUTH_STORAGE_KEY = 'bddr-auth-user';
+const LOGIN_LOG_ENDPOINT = 'https://bddr-tong-log.bddr1247912.workers.dev/api/login-log';
 const GEOJSON_DATA_VERSION = '1.0.2';
 const KML_CACHE_DB = 'bddr-map-cache';
 const KML_CACHE_STORE = 'kml';
@@ -351,6 +352,58 @@ function bindLocateButton() {
   locateBtn.onclick = () => locateUser(true, { userInitiated: true, focusZoom: 17 });
 }
 
+function getLoginLogEndpoint() {
+  return LOGIN_LOG_ENDPOINT || '/api/login-log';
+}
+
+function getBrowserSummary() {
+  const ua = navigator.userAgent || '';
+  const platform = navigator.userAgentData && navigator.userAgentData.platform
+    ? navigator.userAgentData.platform
+    : (navigator.platform || '');
+
+  let browser = 'Unknown browser';
+  if (ua.includes('Edg/')) browser = 'Microsoft Edge';
+  else if (ua.includes('OPR/')) browser = 'Opera';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Safari/')) browser = 'Safari';
+
+  return browser + (platform ? ' / ' + platform : '');
+}
+
+function getPositionLogPayload(position) {
+  if (!position || !position.coords) return { locationStatus: 'unavailable' };
+  return {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+    accuracy: position.coords.accuracy,
+    locationStatus: 'available'
+  };
+}
+
+async function writeLoginAccessLog(position) {
+  if (!currentAuthUser) return;
+
+  try {
+    await fetch(getLoginLogEndpoint(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      keepalive: true,
+      body: JSON.stringify(Object.assign({
+        account: currentAuthUser,
+        displayName: formatLoginDisplayName(currentAuthUser),
+        browser: getBrowserSummary(),
+        platform: navigator.platform || '',
+        language: navigator.language || ''
+      }, getPositionLogPayload(position)))
+    });
+  } catch (err) {
+    console.warn('Không thể ghi thông tin đăng nhập', err);
+  }
+}
+
 async function startAppForUser(loginCode) {
   const normalized = normalizeLoginCode(loginCode);
   if (!allowedLoginCodes.has(normalized)) {
@@ -378,6 +431,7 @@ async function startAppForUser(loginCode) {
   const shouldPanToLocation = !loadAppState();
   setTimeout(async () => {
     const initialPosition = await locateUser(shouldPanToLocation, { userInitiated: true });
+    await writeLoginAccessLog(initialPosition);
     if (initialPosition && typeof bootstrapApp._onboardReady === 'function') {
       bootstrapApp._onboardReady();
     }
