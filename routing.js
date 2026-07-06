@@ -119,7 +119,7 @@ function beginDirectRoute(latlng, label) {
   if (!startPoint) {
     pendingDirectRoute = true;
     showToast('Đang lấy vị trí hiện tại...');
-    if (typeof locateUser === 'function') locateUser(false, { userInitiated: true });
+    if (typeof locateUser === 'function') locateUser(true, { userInitiated: true, focusZoom: 17 });
     return;
   }
 
@@ -267,7 +267,7 @@ async function findRoute() {
   const options = arguments[0] && !arguments[0].preventDefault ? arguments[0] : {};
   if (!startPoint || !endPoint) {
     showToast('Thiếu điểm xuất phát hoặc điểm đến');
-    if (!startPoint && typeof locateUser === 'function') locateUser(true, { userInitiated: true });
+    if (!startPoint && typeof locateUser === 'function') locateUser(true, { userInitiated: true, focusZoom: 17 });
     return;
   }
   const btn = findRouteBtn();
@@ -830,14 +830,18 @@ function handleOffRoute(distanceFromRoute) {
   maybeReroute(distanceFromRoute);
 }
 
-function recenterNavigation() {
+async function recenterNavigation() {
   followUser = true;
+  if (typeof locateUser === 'function') {
+    await locateUser(true, { userInitiated: true, focusZoom: 17 });
+  }
   if (isNavigating) {
     followHeading = true;
     if (Number.isFinite(navBearingTarget)) startNavBearingLoop();
   }
   if (isNavigating && startPoint && typeof map !== 'undefined' && map) {
-    // Glide back to the user via the smooth follow loop (consistent with nav follow).
+    const targetZoom = Math.max(map.getZoom(), 17);
+    map.flyTo(startPoint, targetZoom, { animate: true, duration: 0.45 });
     navFollowTarget = [startPoint[0], startPoint[1]];
     startNavFollowLoop();
   } else if (startPoint && typeof map !== 'undefined' && map) {
@@ -855,6 +859,8 @@ function setNavigationDriveMode(enabled) {
   // nen an nut bam huong noi ngoai ban do de tranh trung lap.
   const outerCompass = document.getElementById('compassModeBtn');
   if (outerCompass) outerCompass.hidden = enabled;
+  const outerLocate = document.getElementById('locateBtn');
+  if (outerLocate) outerLocate.hidden = enabled;
 
   if (overlay) {
     overlay.hidden = !enabled;
@@ -1585,7 +1591,7 @@ function updateFollowControls() {
   btns.forEach(btn => {
     btn.classList.toggle('map-fab--active', isNavigating && followUser);
     btn.classList.toggle('icon-btn--active', isNavigating && followUser);
-    btn.title = followUser ? 'Đang bám theo vị trí' : 'Căn giữa và bám theo vị trí';
+    btn.title = followUser ? 'Đang bám theo vị trí' : 'Vị trí của tôi';
     btn.setAttribute('aria-label', btn.title);
   });
 }

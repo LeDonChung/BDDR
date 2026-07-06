@@ -41,9 +41,6 @@
             <div id="parcelSearchSuggestions" class="app-search__suggestions" hidden></div>
         </div>
         <div class="app-header__right">
-            <button id="infoBtn" class="icon-btn" title="Thông tin đơn vị" aria-label="Thông tin đơn vị">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-            </button>
             <button id="accountBtn" class="account-btn" type="button" title="Đổi đơn vị" aria-label="Đổi đơn vị">
                 <span id="accountLabel">Đơn vị</span>
             </button>
@@ -58,6 +55,14 @@
 
     <!-- Map -->
     <main id="map" class="map">
+        <div class="map-utility-controls" aria-label="Thông tin và hướng dẫn">
+            <button id="infoBtn" class="icon-btn" title="Thông tin đơn vị" aria-label="Thông tin đơn vị">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </button>
+            <button id="helpBtn" class="icon-btn" title="Xem hướng dẫn" aria-label="Xem hướng dẫn sử dụng">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+            </button>
+        </div>
         <!-- Floating compass mode toggle (always visible) -->
         <button id="compassModeBtn" class="map-fab map-fab--compass-mode" title="Bắc trên đầu / Bám hướng" aria-label="Chuyển chế độ la bàn">
             <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="compass-mode-icon"><path d="M12 2 16 22 12 17 8 22 12 2Z"/></svg>
@@ -92,7 +97,7 @@
         </div>
 
         <div class="nav-drive__controls">
-            <button id="navDriveRecenterBtn" class="map-fab" title="Căn giữa vị trí" aria-label="Căn giữa vị trí">
+            <button id="navDriveRecenterBtn" class="map-fab" title="Vị trí của tôi" aria-label="Vị trí của tôi">
                 <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
             </button>
             <button id="navDriveCompassModeBtn" class="map-fab map-fab--compass-mode" title="Bắc trên đầu / Bám hướng" aria-label="Chuyển chế độ la bàn">
@@ -330,6 +335,49 @@
                 <button id="cdRefreshBtn" class="btn btn--ghost btn--sm">Refresh</button>
             </div>
             <div class="compass-debug__hint" id="cdHint"></div>
+        </div>
+    </div>
+
+    <!-- Onboarding overlay -->
+    <div id="onboardingOverlay" class="onboarding-overlay">
+        <div class="onboarding-backdrop" id="onboardingBackdrop"></div>
+        <div class="onboarding-spotlight" id="onboardingSpotlight"></div>
+        <div class="onboarding-tooltip" id="onboardingTooltip">
+            <div class="onboarding-tooltip__step" id="onboardingStepLabel">Bước 1/5</div>
+            <div class="onboarding-tooltip__title" id="onboardingTitle"></div>
+            <div class="onboarding-tooltip__body" id="onboardingBody"></div>
+            <div class="onboarding-tooltip__actions">
+                <button class="onboarding-skip" id="onboardingSkipBtn" type="button">Bỏ qua</button>
+                <div class="onboarding-nav">
+                    <button class="onboarding-prev" id="onboardingPrevBtn" type="button">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        Trước
+                    </button>
+                    <button class="onboarding-next" id="onboardingNextBtn" type="button">
+                        Tiếp
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="onboarding-dots" id="onboardingDots"></div>
+        </div>
+    </div>
+
+    <!-- Welcome card -->
+    <div id="onboardingWelcome" class="onboarding-welcome">
+        <div class="onboarding-welcome__card">
+            <div class="onboarding-welcome__icon">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+            <h2>Chào mừng!</h2>
+            <p>Khám phá bản đồ đất đai theo đơn vị. Hướng dẫn nhanh 30 giây giúp bạn làm quen với các tính năng chính.</p>
+            <div class="onboarding-welcome__actions">
+                <button class="onboarding-welcome__start" id="onboardingStartBtn" type="button">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Bắt đầu hướng dẫn
+                </button>
+                <button class="onboarding-welcome__skip" id="onboardingWelcomeSkipBtn" type="button">Bỏ qua — vào bản đồ</button>
+            </div>
         </div>
     </div>
 

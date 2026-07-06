@@ -376,6 +376,7 @@ function startAppForUser(loginCode) {
   bindLocateButton();
   startCompassOnAppOpen();
   setTimeout(() => locateUser(!loadAppState()), 80);
+  if (typeof bootstrapApp._onboardReady === 'function') bootstrapApp._onboardReady();
 }
 
 function onLoginSubmit(event) {
@@ -597,13 +598,31 @@ function escapeHtmlInfo(s) {
     .replace(/>/g, '&gt;');
 }
 
+function stopUtilityControlEvent(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (typeof L !== 'undefined' && L.DomEvent) L.DomEvent.stop(event);
+}
+
+function initMapUtilityControls() {
+  const controls = document.querySelector('.map-utility-controls');
+  if (!controls) return;
+  ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach(type => {
+    controls.addEventListener(type, (event) => {
+      event.stopPropagation();
+      if (typeof L !== 'undefined' && L.DomEvent) L.DomEvent.stopPropagation(event);
+    });
+  });
+}
+
 function initInfoModal() {
   const infoBtn = $('infoBtn');
   const closeBtn = $('infoModalCloseBtn');
   const backdrop = document.querySelector('#infoModal .modal__backdrop');
 
   if (infoBtn) {
-    infoBtn.addEventListener('click', () => {
+    infoBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
       openInfoModal();
       renderInfoTeamPicker();
     });
@@ -720,17 +739,7 @@ function initMap() {
   kmlStyleMode = currentBaseLayer === satelliteLayer ? 'satellite' : 'street';
   currentBaseLayer.addTo(map);
 
-  L.control.layers(
-    {
-      'Đường phố': osmLayer,
-      'Vệ tinh': satelliteLayer
-    },
-    null,
-    {
-      position: 'bottomright',
-      collapsed: true
-    }
-  ).addTo(map);
+  addBaseLayerToggleControl();
 
   map.on('movestart', cancelKMLRender);
   map.on('zoomstart', onKMLZoomStart);
@@ -1856,6 +1865,54 @@ function onBaseLayerChange(event) {
   saveAppState();
 }
 
+function setBaseLayer(layer) {
+  if (!map || !layer || currentBaseLayer === layer) return;
+  if (currentBaseLayer && map.hasLayer(currentBaseLayer)) {
+    map.removeLayer(currentBaseLayer);
+  }
+  currentBaseLayer = layer;
+  currentBaseLayer.addTo(map);
+  kmlStyleMode = currentBaseLayer === satelliteLayer ? 'satellite' : 'street';
+  updatePMTilesLayerStyles();
+  updateKMLLayerStyles();
+  updateBaseLayerToggleTitle();
+  saveAppState();
+}
+
+function toggleBaseLayer() {
+  setBaseLayer(currentBaseLayer === satelliteLayer ? osmLayer : satelliteLayer);
+}
+
+function updateBaseLayerToggleTitle() {
+  const btn = document.querySelector('.leaflet-control-layers-toggle');
+  if (!btn) return;
+  const nextName = currentBaseLayer === satelliteLayer ? '???ng ph?' : 'V? tinh';
+  btn.title = '??i sang ' + nextName;
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function addBaseLayerToggleControl() {
+  if (!map || !L || !L.Control) return;
+  const ToggleControl = L.Control.extend({
+    options: { position: 'bottomright' },
+    onAdd() {
+      const container = L.DomUtil.create('div', 'leaflet-control-layers leaflet-control');
+      const button = L.DomUtil.create('button', 'leaflet-control-layers-toggle', container);
+      button.type = 'button';
+      button.setAttribute('aria-haspopup', 'false');
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+      L.DomEvent.on(button, 'click', (event) => {
+        L.DomEvent.preventDefault(event);
+        toggleBaseLayer();
+      });
+      setTimeout(updateBaseLayerToggleTitle, 0);
+      return container;
+    }
+  });
+  new ToggleControl().addTo(map);
+}
+
 function updatePMTilesLayerStyles() {
   if (!pmtilesLayer) return;
   // Chỉ redraw, KHÔNG remove/re-add để tránh reload tiles
@@ -2406,8 +2463,8 @@ function onFeatureClick(e) {
 }
 
 function onMapBackgroundClick(e) {
-  // Ignore clicks on compass mode buttons.
-  if (e.originalEvent.target.closest('#compassModeBtn, #navDriveCompassModeBtn')) return;
+  // Ignore clicks on floating UI controls.
+  if (e.originalEvent.target.closest('#compassModeBtn, #navDriveCompassModeBtn, .map-utility-controls, .leaflet-control')) return;
 
   const hit = findRenderedFeatureAt(e.latlng);
   if (hit) {
@@ -2964,9 +3021,269 @@ function setUserPosition(latlng, accuracy, pan, heading, navigationMode, focusZo
   }
 }
 
+// ===== ONBOARDING =====
+const ONBOARDING_KEY_PREFIX = 'bddr-onboarding';
+const ONBOARDING_DONE_VALUE = 'done';
+function readOnboarding() {
+  try { return localStorage.getItem(ONBOARDING_KEY_PREFIX) === ONBOARDING_DONE_VALUE; }
+  catch (e) { return false; }
+}
+function readOnboardingStep() {
+  try {
+    const value = localStorage.getItem(ONBOARDING_KEY_PREFIX);
+    if (!value || value === ONBOARDING_DONE_VALUE) return 0;
+    const step = Number(value);
+    return Number.isInteger(step) ? Math.max(0, Math.min(step, OB_STEPS.length - 1)) : 0;
+  } catch (e) { return 0; }
+}
+function saveOnboardingStep(step) {
+  try { localStorage.setItem(ONBOARDING_KEY_PREFIX, String(Math.max(0, Math.min(step, OB_STEPS.length - 1)))); }
+  catch (e) {}
+}
+function markOnboardingDone() {
+  try { localStorage.setItem(ONBOARDING_KEY_PREFIX, ONBOARDING_DONE_VALUE); }
+  catch (e) {}
+}
+function resetOnboarding() {
+  try { localStorage.removeItem(ONBOARDING_KEY_PREFIX); }
+  catch (e) {}
+}
+const OB_STEPS = [
+  { title: 'Tìm lô đất', body: 'Gõ mã lô vào ô tìm kiếm ở thanh trên — kết quả hiện ngay bên dưới để chọn nhanh thửa đất.', target: '#parcelSearchInput', autoAction(cleanup) { const input = document.getElementById('parcelSearchInput'); input && input.focus(); cleanup(); } },
+  { title: 'Chọn điểm trên bản đồ', body: 'Chạm hoặc click vào bất kỳ điểm nào trên bản đồ để chọn điểm đến và mở tùy chọn chỉ đường.', target: '#map', autoAction(cleanup) { cleanup(); } },
+  { title: 'Vị trí của tôi', body: 'Bấm nút định vị để lấy GPS và zoom về vị trí hiện tại của bạn.', target: '#locateBtn', autoAction(cleanup) { cleanup(); } },
+  { title: 'Thông tin đơn vị', body: 'Bấm nút chữ i để xem thông tin chi tiết của đơn vị đang mở và đổi nhanh sang đơn vị khác nếu cần.', target: '#infoBtn', autoAction(cleanup) { cleanup(); } },
+  { title: 'Chế độ la bàn', body: 'Bấm nút la bàn để chuyển giữa bám hướng di chuyển và giữ Bắc ở phía trên.', target: '#compassModeBtn', autoAction(cleanup) { cleanup(); } },
+  { title: 'Chuyển nền bản đồ', body: 'Nút lớp bản đồ ở góc dưới bên phải cho phép đổi giữa nền vệ tinh và đường phố.', target: '.leaflet-control-layers-toggle', autoAction(cleanup) { cleanup(); } }
+];
+let ob = { active: false, step: -1, totalSteps: OB_STEPS.length, prevFocus: null, prevVal: null, prevActiveLayer: null, _cleanupTimer: null, _actionTimer: null };
+function obShow() { const el = document.getElementById('onboardingOverlay'); if (el) el.classList.add('is-visible'); }
+function obHide() { const el = document.getElementById('onboardingOverlay'); if (el) el.classList.remove('is-visible'); }
+function obWelcomeShow() { const el = document.getElementById('onboardingWelcome'); if (el) el.classList.remove('is-hidden'); }
+function obWelcomeHide() { const el = document.getElementById('onboardingWelcome'); if (el) el.classList.add('is-hidden'); }
+function obCancel() {
+  clearTimeout(ob._cleanupTimer);
+  clearTimeout(ob._actionTimer);
+  ob.active = false;
+  obHide();
+  obWelcomeHide();
+  if (typeof obRestoreFocus === 'function') obRestoreFocus();
+  markOnboardingDone();
+}
+function obSaveFocus() {
+  ob.prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+}
+function obRestoreFocus() {
+  if (ob.prevFocus && typeof ob.prevFocus.focus === 'function') {
+    try { ob.prevFocus.focus(); } catch (e) {}
+  }
+  ob.prevFocus = null;
+}
+function obHighlight(targetEl) {
+  const fixTooltip = () => {
+    const tooltip = document.getElementById('onboardingTooltip');
+    if (!tooltip) return;
+    if (targetEl && targetEl.closest) {
+      const container = targetEl.closest('.onboarding-tooltip__body');
+      if (container) tooltip.appendChild(container);
+    }
+  };
+  requestAnimationFrame(fixTooltip);
+  const arrow = document.getElementById('onboardingArrow');
+  if (!arrow || !targetEl) {
+    if (arrow) arrow.hidden = true;
+    return;
+  }
+  arrow.hidden = false;
+  const rect = targetEl.getBoundingClientRect();
+  const arrRect = arrow.getBoundingClientRect();
+  const X_GAP = 10;
+  const Y_GAP = 10;
+  const tooltip = document.getElementById('onboardingTooltip');
+  const tooltipRect = tooltip ? tooltip.getBoundingClientRect() : null;
+  let arrowTop = rect.top + rect.height / 2 - arrRect.height / 2;
+  let arrowLeft = rect.right + X_GAP;
+  let transform = '';
+  if (tooltipRect) {
+    if (arrowLeft + arrRect.width > tooltipRect.right) {
+      arrowLeft = rect.left - arrRect.width - X_GAP;
+      transform = 'rotate(180deg)';
+    }
+    if (arrowLeft < Math.max(tooltipRect.left, 8)) arrowLeft = Math.max(tooltipRect.left, 8);
+    arrowTop = Math.max(8, Math.min(arrowTop, (tooltipRect ? tooltipRect.bottom : window.innerHeight) - arrRect.height - 8));
+  }
+  arrow.style.top = arrowTop + 'px';
+  arrow.style.left = arrowLeft + 'px';
+  arrow.style.transform = transform;
+  arrow.style.transformOrigin = 'center center';
+}
+function obPlaceTooltip(targetRect) {
+  const tooltip = document.getElementById('onboardingTooltip');
+  if (!tooltip) return;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const tw = 280;
+  const th = tooltip.offsetHeight || 180;
+  const GAP = 14;
+  let left, top;
+  if (!targetRect) {
+    left = (vw - tw) / 2;
+    top = (vh - th) / 2;
+  } else {
+    left = targetRect.left + targetRect.width / 2 - tw / 2;
+    top = targetRect.bottom + GAP;
+    if (top + th > vh) top = targetRect.top - th - GAP;
+    left = Math.max(8, Math.min(left, vw - tw - 8));
+    top = Math.max(8, Math.min(top, vh - th - 8));
+  }
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
+}
+function obBuildDots() {
+  const dots = document.getElementById('onboardingDots');
+  if (!dots) return;
+  dots.innerHTML = '';
+  for (let i = 0; i < ob.totalSteps; i++) {
+    const d = document.createElement('span');
+    d.className = 'onboarding-dot' + (i === ob.step ? ' is-active' : '');
+    dots.appendChild(d);
+  }
+}
+function obRunStep(index) {
+  obSaveFocus();
+  ob.step = index;
+  clearTimeout(ob._cleanupTimer);
+  clearTimeout(ob._actionTimer);
+  if (index < 0 || index >= ob.totalSteps) return;
+  saveOnboardingStep(index);
+  const step = OB_STEPS[index];
+  const overlay = document.getElementById('onboardingOverlay');
+  const backdrop = document.getElementById('onboardingBackdrop');
+  const spotlight = document.getElementById('onboardingSpotlight');
+  const titleEl = document.getElementById('onboardingTitle');
+  const bodyEl = document.getElementById('onboardingBody');
+  const stepLabel = document.getElementById('onboardingStepLabel');
+  const prevBtn = document.getElementById('onboardingPrevBtn');
+  const nextBtn = document.getElementById('onboardingNextBtn');
+  if (stepLabel) stepLabel.textContent = 'Bước ' + (index + 1) + '/' + ob.totalSteps;
+  if (titleEl) titleEl.textContent = step.title;
+  if (bodyEl) bodyEl.textContent = step.body;
+  if (prevBtn) prevBtn.style.visibility = index === 0 ? 'hidden' : 'visible';
+  if (nextBtn) nextBtn.textContent = index === ob.totalSteps - 1 ? 'Xong' : 'Tiếp';
+  if (overlay) overlay.classList.add('is-visible');
+  if (spotlight) {
+    spotlight.style.background = 'transparent';
+    spotlight.style.boxShadow = 'none';
+  }
+  const targetEl = step.target === '#map' ? document.getElementById('map') : document.querySelector(step.target);
+  const targetRect = targetEl ? targetEl.getBoundingClientRect() : null;
+  if (spotlight && targetRect) {
+    const PAD = 8;
+    spotlight.style.top = (targetRect.top - PAD) + 'px';
+    spotlight.style.left = (targetRect.left - PAD) + 'px';
+    spotlight.style.width = (targetRect.width + PAD * 2) + 'px';
+    spotlight.style.height = (targetRect.height + PAD * 2) + 'px';
+    spotlight.style.borderRadius = '12px';
+    spotlight.style.background = 'transparent';
+    spotlight.style.boxShadow = 'none';
+    spotlight.style.border = '2px solid rgba(255,216,77,0.7)';
+  } else if (spotlight) {
+    spotlight.style.top = '0';
+    spotlight.style.left = '0';
+    spotlight.style.width = '0';
+    spotlight.style.height = '0';
+    spotlight.style.borderRadius = '0';
+    spotlight.style.background = 'transparent';
+    spotlight.style.boxShadow = 'none';
+    spotlight.style.border = 'none';
+  }
+  obBuildDots();
+  obShow();
+  obWelcomeHide();
+  requestAnimationFrame(() => {
+    obPlaceTooltip(targetRect);
+    obHighlight(targetEl);
+    clearTimeout(ob._actionTimer);
+    ob._actionTimer = setTimeout(() => {
+      if (step.autoAction) {
+        const cleanup = () => { clearTimeout(ob._actionTimer); ob._actionTimer = null; };
+        try { step.autoAction(cleanup); } catch (e) { cleanup(); }
+      }
+    }, 300);
+  });
+}
+function obNext() {
+  if (ob.step < ob.totalSteps - 1) {
+    saveOnboardingStep(ob.step + 1);
+    obRunStep(ob.step + 1);
+  }
+  else {
+    ob.active = false;
+    obHide();
+    markOnboardingDone();
+    showToast('Đã xong! Chúc bạn sử dụng hiệu quả.');
+  }
+}
+function obPrev() { if (ob.step > 0) obRunStep(ob.step - 1); }
+function obRestart() { ob.active = true; ob.step = -1; obWelcomeShow(); obHide(); obRestoreFocus(); }
+function obStartFromWelcome() {
+  ob.active = true;
+  const startStep = readOnboardingStep();
+  ob.step = startStep;
+  obWelcomeHide();
+  obHide();
+  setTimeout(() => obRunStep(startStep), 60);
+}
+function initOnboarding() {
+  if (readOnboarding()) {
+    obHide();
+    obWelcomeHide();
+  }
+  document.getElementById('onboardingStartBtn')?.addEventListener('click', obStartFromWelcome);
+  document.getElementById('onboardingWelcomeSkipBtn')?.addEventListener('click', obCancel);
+  document.getElementById('onboardingNextBtn')?.addEventListener('click', obNext);
+  document.getElementById('onboardingPrevBtn')?.addEventListener('click', obPrev);
+  document.getElementById('onboardingSkipBtn')?.addEventListener('click', obCancel);
+  document.getElementById('helpBtn')?.addEventListener('click', (event) => {
+    stopUtilityControlEvent(event);
+    obRestart();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!ob.active) return;
+    if (e.key === 'Escape') e.preventDefault();
+  });
+  window.addEventListener('resize', () => {
+    if (!ob.active || ob.step < 0 || ob.step >= ob.totalSteps) return;
+    const step = OB_STEPS[ob.step];
+    const targetEl = step.target === '#map' ? document.getElementById('map') : document.querySelector(step.target);
+    const targetRect = targetEl ? targetEl.getBoundingClientRect() : null;
+    const spotlight = document.getElementById('onboardingSpotlight');
+    if (spotlight && targetRect) {
+      const PAD = 8;
+      spotlight.style.top = (targetRect.top - PAD) + 'px';
+      spotlight.style.left = (targetRect.left - PAD) + 'px';
+      spotlight.style.width = (targetRect.width + PAD * 2) + 'px';
+      spotlight.style.height = (targetRect.height + PAD * 2) + 'px';
+    }
+    obPlaceTooltip(targetRect);
+    obHighlight(targetEl);
+  });
+  if (bootstrapApp) bootstrapApp._onboardReady = () => {
+    if (readOnboarding()) {
+      obHide();
+      obWelcomeHide();
+      return;
+    }
+    setTimeout(() => {
+      if (!readOnboarding()) obRestart();
+    }, 400);
+  };
+}
+
 // ===== BOOT =====
 document.addEventListener('DOMContentLoaded', () => {
   bindCompassModeButtons();
+  initOnboarding();
   bootstrapApp();
 });
 
