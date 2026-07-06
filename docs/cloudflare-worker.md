@@ -409,7 +409,40 @@ Cloudflare Workers không có cron miễn phí. Có thể dùng:
 - Cloudflare Workers Cron Trigger (free tier 5 lần/ngày) — ví dụ mỗi 6 giờ xoá `WHERE expires_at < datetime(''now'')`.
 - Hoặc lazy: các API `loadSession` đã tự xoá session hết hạn khi truy cập.
 
-## 13. Đề xuất mở rộng sau này
+## 13. Trang quản trị `/admin`
+
+Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sessions, xem log theo user.
+
+### Truy cập
+
+- URL: <https://bddr-tong-log.<ten-account>.workers.dev/admin>
+- Đăng nhập bằng tài khoản `doankinhtecty75` (tài khoản tổng). Token lưu `localStorage[bddr-admin-token]`.
+- API gọi với `Authorization: Bearer <token>`. Worker kiểm tra session + quyền admin.
+
+### 3 tab chính
+
+1. **Users**: danh sách tất cả user (kể cả đã khoá). Tìm kiếm theo mã/tên/folder. Thêm / sửa / khoá-mở / xoá. Modal xác nhận trước khi xoá.
+2. **Sessions**: chọn user → xem danh sách session đang hoạt động (token rút gọn, IP, UA, thời gian tạo/hết hạn/lần cuối). Có nút "Huỷ tất cả session" để đăng xuất hàng loạt.
+3. **Logs theo user**: chọn user → xem log đăng nhập tương ứng (dùng lại API `/api/login-log/recent` có sẵn).
+
+### API admin (tất cả cần Bearer token của `doankinhtecty75`)
+
+| Method + Path | Mô tả |
+| --- | --- |
+| `GET /api/admin/users` | Trả tất cả user (kể cả inactive) |
+| `POST /api/users` | Tạo user mới |
+| `PUT /api/users?code=...` | Sửa user (chỉ truyền field muốn đổi) |
+| `DELETE /api/users?code=...` | Xoá user (kèm toàn bộ session của user) |
+| `GET /api/admin/sessions?code=...` | Danh sách session của 1 user (tối đa 200) |
+| `POST /api/admin/sessions/kill` body `{"code":"..."}` | Huỷ mọi session của 1 user |
+
+### Quy tắc
+
+- Không thể xoá tài khoản `doankinhtecty75` (bảo vệ admin).
+- Xoá user tự động xoá luôn session của user đó.
+- Tất cả request admin phải có `Authorization` header và user phải là `doankinhtecty75`. Nếu không sẽ trả 401/403.
+
+## 14. Đề xuất mở rộng sau này
 
 - Tạo API `/api/login-log/recent` để dashboard xem các lần đăng nhập gần nhất.
 - Thêm rate limit bằng Cloudflare Rate Limiting Rules.
@@ -417,5 +450,6 @@ Cloudflare Workers không có cron miễn phí. Có thể dùng:
 - Đẩy log cũ hơn sang R2 / KV để giảm chi phí D1.
 - Cron Trigger dọn log cũ trên 90 ngày.
 - Workers AI gán nhãn log (phát hiện bất thường) – free tier.
+
 
 
