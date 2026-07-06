@@ -356,6 +356,7 @@ function renderAdminPage() {
           <input id="logLimit" type="number" min="1" max="500" value="100" style="margin-left:6px;padding:6px 8px;border:1px solid #cbd2d9;border-radius:6px;width:80px" />
         </label>
         <button id="logReload" class="ghost">↻ Tải lại</button>
+        <button id="logClearPage" class="danger">Xoa log trang hien tai</button>
       </div>
       <table id="logTable">
         <thead><tr>
@@ -393,9 +394,11 @@ function renderAdminPage() {
 
 <script>
 const BASE = location.origin;
+const ADMIN_CODE = 'ledonchung';
 const TOKEN_KEY = 'bddr-admin-token';
 let adminToken = localStorage.getItem(TOKEN_KEY) || null;
 let allUsers = [];
+let currentLogIds = [];
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -461,7 +464,7 @@ async function doLogin() {
     });
     const body = await r.json();
     if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
-    if (body.user.code !== 'doankinhtecty75') {
+    if (body.user.code !== ADMIN_CODE) {
       $('#loginErr').textContent = 'Chỉ tài khoản tổng mới có quyền admin';
       // vẫn setLoggedInUI để user thấy web vẫn dùng được session, nhưng API admin sẽ 403
       setLoggedInUI(body.token, body.user.code);
@@ -474,7 +477,8 @@ async function doLogin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadUsers(), populateSelects()]);
+  await loadUsers();
+  await populateSelects();
 }
 
 async function loadUsers() {
@@ -575,7 +579,7 @@ async function saveUser(ev) {
 }
 
 async function deleteUser(code) {
-  if (code === 'doankinhtecty75') { toast('Không thể xoá tài khoản tổng', 'err'); return; }
+  if (code === ADMIN_CODE) { toast('Không thể xoá tài khoản tổng', 'err'); return; }
   if (!confirm('Xoá user ' + code + ' và toàn bộ session của user này? Không thể hoàn tác.')) return;
   try {
     await api('/api/users?code=' + encodeURIComponent(code), { method: 'DELETE' });
@@ -634,14 +638,28 @@ async function killSessions() {
   }
 }
 
+async function clearCurrentLogs() {
+  const code = $('#logSelect').value;
+  if (!code || !currentLogIds.length) { toast('Khong co log nao de xoa', 'err'); return; }
+  if (!confirm('Xoa ' + currentLogIds.length + ' dong log dang hien thi cua ' + code + '?')) return;
+  try {
+    const r = await api('/api/admin/login-logs/clear', { method: 'POST', body: JSON.stringify({ ids: currentLogIds }) });
+    toast('Da xoa ' + r.deleted + ' dong log', 'ok');
+    loadLogs();
+  } catch (err) {
+    toast('Loi: ' + err.message, 'err');
+  }
+}
+
 async function loadLogs() {
   const code = $('#logSelect').value;
-  if (!code) { $('#logTable tbody').innerHTML = '<tr><td colspan="8" class="empty">Chọn user để xem log</td></tr>'; return; }
+  if (!code) { currentLogIds = []; $('#logTable tbody').innerHTML = '<tr><td colspan="8" class="empty">Chọn user để xem log</td></tr>'; return; }
   const limit = Math.min(500, Math.max(1, parseInt($('#logLimit').value) || 100));
   try {
     // Dùng endpoint JSON sẵn có
     const r = await api('/api/login-log/recent?account=' + encodeURIComponent(code) + '&pageSize=' + limit);
     const list = r.rows || [];
+    currentLogIds = list.map(row => row.id).filter(Boolean);
     if (!list.length) { $('#logTable tbody').innerHTML = '<tr><td colspan="8" class="empty">User này chưa có log</td></tr>'; return; }
     $('#logTable tbody').innerHTML = list.map(row =>
       '<tr>' +
@@ -704,6 +722,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#logSelect').addEventListener('change', loadLogs);
   $('#logLimit').addEventListener('change', loadLogs);
   $('#logReload').addEventListener('click', loadLogs);
+  $('#logClearPage').addEventListener('click', clearCurrentLogs);
 
   $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
   $('#userForm').addEventListener('submit', saveUser);
@@ -841,6 +860,18 @@ async function fetchLogsPage(env, options) {
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
     rows: (rowsResult && rowsResult.results) || []
   };
+}
+
+async function deleteLoginLogsByIds(env, ids) {
+  const cleanIds = Array.from(new Set((ids || [])
+    .map(id => Number(id))
+    .filter(id => Number.isInteger(id) && id > 0)))
+    .slice(0, PAGE_SIZE_MAX);
+  if (!cleanIds.length) return { ok: true, deleted: 0 };
+  const placeholders = cleanIds.map(() => '?').join(', ');
+  const result = await env.DB.prepare('DELETE FROM login_logs WHERE id IN (' + placeholders + ')').bind(...cleanIds).run();
+  const meta = result && result.meta ? result.meta : {};
+  return { ok: true, deleted: Number(meta.changes || meta.rows_written || 0) };
 }
 
 function renderLogsTable(data, options) {
@@ -1035,6 +1066,15 @@ export default {
         account: cleanText(url.searchParams.get('account'), 80) || null
       });
       return json({ ok: true, ...data });
+    }
+
+    if (url.pathname === '/api/admin/login-logs/clear') {
+      if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
+      const adminCheck = await requireAdmin(request, env);
+      if (adminCheck.error) return json({ ok: false, error: adminCheck.error }, adminCheck.status);
+      const payload = await request.json().catch(() => ({}));
+      const result = await deleteLoginLogsByIds(env, payload.ids);
+      return json(result);
     }
 
     if (url.pathname === '/api/users') {

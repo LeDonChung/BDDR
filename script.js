@@ -666,6 +666,29 @@ function renderInfoTeamPicker() {
   });
 }
 
+async function fetchTeamInfoText(folder, teamName) {
+  const safeFolder = String(folder || '').trim();
+  const safeTeamName = String(teamName || '').trim();
+  const candidates = [
+    'data/' + safeFolder + '/info.txt',
+    'data/' + safeFolder + '/' + safeFolder + '.txt'
+  ];
+  if (safeTeamName) candidates.push('data/' + safeFolder + '/' + safeTeamName + '.txt');
+  candidates.push('data/' + safeFolder + '.txt');
+
+  const tried = [];
+  for (const url of Array.from(new Set(candidates))) {
+    try {
+      const resp = await fetch(encodeURI(url), { cache: 'no-store' });
+      tried.push(url);
+      if (resp.ok) return await resp.text();
+    } catch (err) {
+      tried.push(url);
+    }
+  }
+  throw new Error('Khong tim thay file thong tin cho don vi nay. Da thu: ' + tried.join(', '));
+}
+
 async function loadTeamInfo(folder, teamName, isMain) {
   const teamPicker = $('infoTeamPicker');
   const content = $('infoContent');
@@ -680,10 +703,7 @@ async function loadTeamInfo(folder, teamName, isMain) {
   loading.classList.remove('hidden');
 
   try {
-    const infoUrl = 'data/' + folder + '/info.txt';
-    const resp = await fetch(infoUrl, { cache: 'no-store' });
-    if (!resp.ok) throw new Error('Không tìm thấy file thông tin cho đơn vị này.');
-    const text = await resp.text();
+    const text = await fetchTeamInfoText(folder, teamName);
     const trimmed = text.trim();
     if (!trimmed) throw new Error('File thông tin trống.');
 
