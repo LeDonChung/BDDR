@@ -3,6 +3,7 @@
   time TEXT NOT NULL,
   account TEXT,
   display_name TEXT,
+  team TEXT,
   ip TEXT,
   user_agent TEXT,
   browser TEXT,

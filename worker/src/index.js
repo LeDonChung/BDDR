@@ -887,6 +887,7 @@ function renderLogsTable(data, options) {
       <th>#</th>
       <th>Thời gian (UTC)</th>
       <th>Mã</th>
+      <th>Đơn vị</th>
       <th>Tên hiển thị</th>
       <th>IP</th>
       <th>Trình duyệt</th>
@@ -899,13 +900,14 @@ function renderLogsTable(data, options) {
 
   let body = '';
   if (!rows.length) {
-    body = '<tr><td colspan="11" class="empty">Chưa có log nào</td></tr>';
+    body = '<tr><td colspan="12" class="empty">Chưa có log nào</td></tr>';
   } else {
     for (const r of rows) {
       body += '<tr>' +
         '<td>' + escapeHtml(r.id) + '</td>' +
         '<td>' + escapeHtml(r.time) + '</td>' +
         '<td>' + escapeHtml(r.account) + '</td>' +
+        '<td>' + escapeHtml(r.team || '') + '</td>' +
         '<td>' + escapeHtml(r.display_name) + '</td>' +
         '<td>' + escapeHtml(r.ip) + '</td>' +
         '<td>' + escapeHtml(r.browser) + '</td>' +
@@ -1028,6 +1030,7 @@ async function writeLoginLog(request, env) {
     time: new Date().toISOString(),
     account: cleanText(payload.account, 80),
     displayName: cleanText(payload.displayName, 120),
+    team: cleanText(payload.team, 120),
     ip: cleanText(getClientIp(request), 120),
     userAgent: cleanText(request.headers.get('user-agent'), 500),
     browser: cleanText(payload.browser, 160),
@@ -1040,11 +1043,12 @@ async function writeLoginLog(request, env) {
   };
 
   const result = await env.DB.prepare(
-    'INSERT INTO login_logs (time, account, display_name, ip, user_agent, browser, platform, language, latitude, longitude, accuracy, location_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO login_logs (time, account, display_name, team, ip, user_agent, browser, platform, language, latitude, longitude, accuracy, location_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(
     row.time,
     row.account,
     row.displayName,
+    row.team,
     row.ip,
     row.userAgent,
     row.browser,

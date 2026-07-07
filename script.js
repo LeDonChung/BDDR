@@ -146,7 +146,7 @@ function isIOSLikeDevice() {
 }
 
 function useDistinctBoundaryColors() {
-  return !!(currentDataProfile && currentDataProfile.userCode === 'doankinhtecty75');
+  return !!(currentUserRecord && currentUserRecord.folder === 'main');
 }
 
 function getGroupColor(group) {
@@ -319,8 +319,20 @@ function hideLoginScreen() {
   screen.setAttribute('aria-hidden', 'true');
 }
 
+function applyLoginBrand() {
+  const brandName = $('loginBrandName');
+  const brandSub = $('loginBrandSub');
+  if (brandName) {
+    brandName.textContent = currentUserRecord?.team || 'Công ty 75';
+  }
+  if (brandSub) {
+    brandSub.textContent = currentUserRecord?.shortLabel || currentUserRecord?.team || 'Bản đồ đất đai theo đơn vị';
+  }
+}
+
 function formatLoginDisplayName(code) {
-  if (code === 'doankinhtecty75') return 'Công ty 75';
+  if (currentUserRecord?.shortLabel) return currentUserRecord.shortLabel;
+  if (currentUserRecord?.team) return currentUserRecord.team;
   const match = code.match(/^cty75doi(\d{1,2})$/);
   if (match) return 'Đội ' + Number(match[1]);
   return code;
@@ -328,6 +340,9 @@ function formatLoginDisplayName(code) {
 
 function applyDataProfileToUI() {
   if (!currentDataProfile) return;
+
+  const brandName = $('appBrandName');
+  if (brandName) brandName.textContent = currentUserRecord?.team || 'Công ty 75';
 
   const subtitle = $('appSubtitle');
   if (subtitle) subtitle.textContent = currentDataProfile.subtitle;
@@ -419,6 +434,7 @@ async function writeLoginAccessLog(position) {
       body: JSON.stringify(Object.assign({
         account: currentAuthUser,
         displayName: formatLoginDisplayName(currentAuthUser),
+        team: currentUserRecord?.team || '',
         browser: getBrowserSummary(),
         platform: navigator.platform || '',
         language: navigator.language || ''
@@ -446,6 +462,7 @@ async function startAppForUser(sessionResult) {
   labelsLoaded = false;
   labelFeatures = [];
   applyDataProfileToUI();
+  applyLoginBrand();
   hideLoginScreen();
   startSessionKeepalive();
 
@@ -601,7 +618,8 @@ function normalizeTeamFolder(folder) {
 
 function getAllowedTeams() {
   if (!currentAuthUser) return [];
-  if (currentAuthUser === 'ledonchung' || currentAuthUser === 'doankinhtecty75') {
+  const userFolder = currentUserRecord?.folder || currentDataProfile?.folder;
+  if (userFolder === 'main') {
     // All known teams
     return [
       { folder: 'main',        name: 'Công ty (Toàn bộ)',   isMain: true },
