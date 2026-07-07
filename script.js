@@ -2185,11 +2185,27 @@ function getKMLFeatureStyle(feature) {
 }
 
 function updateKMLLayerStyles() {
-  kmlActiveFeatures.forEach(feature => {
-    if (feature.layer && typeof feature.layer.setStyle === 'function') {
-      feature.layer.setStyle(getKMLFeatureStyle(feature));
+  const features = Array.from(kmlActiveFeatures).filter(
+    f => f.layer && typeof f.layer.setStyle === 'function'
+  );
+  if (!features.length) return;
+
+  let index = 0;
+  const CHUNK = 80;
+
+  const applyChunk = () => {
+    const end = Math.min(index + CHUNK, features.length);
+    for (; index < end; index++) {
+      features[index].layer.setStyle(getKMLFeatureStyle(features[index]));
     }
-  });
+    if (index < features.length) {
+      if ('requestIdleCallback' in window) requestIdleCallback(applyChunk, { timeout: 200 });
+      else requestAnimationFrame(applyChunk);
+    }
+  };
+
+  if ('requestIdleCallback' in window) requestIdleCallback(applyChunk, { timeout: 200 });
+  else requestAnimationFrame(applyChunk);
 }
 function textOf(node, tag) {
   const els = node.getElementsByTagName(tag);
@@ -3290,7 +3306,7 @@ const OB_STEPS = [
   { title: 'Vị trí của tôi', body: 'Bấm nút định vị để lấy GPS và zoom về vị trí hiện tại của bạn.', target: '#locateBtn', autoAction(cleanup) { cleanup(); } },
   { title: 'Thông tin đơn vị', body: 'Bấm nút chữ i để xem thông tin chi tiết của đơn vị đang mở và đổi nhanh sang đơn vị khác nếu cần.', target: '#infoBtn', autoAction(cleanup) { cleanup(); } },
   { title: 'Chế độ la bàn', body: 'Bấm nút la bàn để chuyển giữa bám hướng di chuyển và giữ Bắc ở phía trên.', target: '#compassModeBtn', autoAction(cleanup) { cleanup(); } },
-  { title: 'Chuyển nền bản đồ', body: 'Nút lớp bản đồ ở góc dưới bên phải cho phép đổi giữa nền vệ tinh và đường phố.', target: '.leaflet-control-layers-toggle', autoAction(cleanup) { cleanup(); } }
+  { title: 'Chuyển nền bản đồ', body: 'Nút lớp bản đồ ở góc dưới bên phải cho phép đổi giữa nền vệ tinh, đường phố và bình địa.', target: '.leaflet-control-layers-toggle', autoAction(cleanup) { cleanup(); } }
 ];
 let ob = { active: false, step: -1, totalSteps: OB_STEPS.length, prevFocus: null, prevVal: null, prevActiveLayer: null, _cleanupTimer: null, _actionTimer: null };
 function obShow() { const el = document.getElementById('onboardingOverlay'); if (el) el.classList.add('is-visible'); }
