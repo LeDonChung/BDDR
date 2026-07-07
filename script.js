@@ -860,6 +860,19 @@ const satelliteLayer = L.tileLayer(
   }
 );
 
+const terrain3DLayer = L.tileLayer(
+  'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+  {
+    attribution: '&copy; OpenTopoMap contributors',
+    maxZoom: 17,
+    maxNativeZoom: 17,
+    minZoom: 2,
+    updateWhenZooming: true,
+    updateWhenIdle: true,
+    keepBuffer: 4
+  }
+);
+
 // ===== INIT MAP =====
 function initMap() {
   const savedState = loadAppState();
@@ -907,6 +920,9 @@ function initMap() {
     saveAppStateDebounced();
   });
   map.on('zoomend', () => {
+    if (currentBaseLayer === terrain3DLayer && map.getZoom() > terrain3DLayer.options.maxZoom) {
+      map.setZoom(terrain3DLayer.options.maxZoom, { animate: true });
+    }
     scheduleVisibleKMLRender(320);
     saveAppStateDebounced();
   });
@@ -2021,7 +2037,12 @@ function onBaseLayerChange(event) {
   kmlStyleMode = currentBaseLayer === satelliteLayer ? 'satellite' : 'street';
   updatePMTilesLayerStyles();
   updateKMLLayerStyles();
+  updateBaseLayerToggleTitle();
   saveAppState();
+}
+
+function isLayerTerrain(layer) {
+  return layer === terrain3DLayer;
 }
 
 function setBaseLayer(layer) {
@@ -2042,12 +2063,60 @@ function toggleBaseLayer() {
   setBaseLayer(currentBaseLayer === satelliteLayer ? osmLayer : satelliteLayer);
 }
 
+function getAllBaseLayers() {
+  return [osmLayer, satelliteLayer, terrain3DLayer];
+}
+
+function getLayerDisplayName(layer) {
+  if (layer === osmLayer) return '\u0110\u01B0\u1EDDng ph\u1ED1';
+  if (layer === satelliteLayer) return 'V\u1EC7 tinh';
+  if (layer === terrain3DLayer) return 'B\xECnh \u0111\u1ED9 3D';
+  return 'B\u1EA3n \u0111\u1ED3';
+}
+
 function updateBaseLayerToggleTitle() {
   const btn = document.querySelector('.leaflet-control-layers-toggle');
   if (!btn) return;
-  const nextName = currentBaseLayer === satelliteLayer ? '???ng ph?' : 'V? tinh';
-  btn.title = '??i sang ' + nextName;
+  const nextName = currentBaseLayer === satelliteLayer ? 'V\u1EC7 tinh' : '\u0110\u01B0\u1EDDng ph\u1ED1';
+  btn.title = '\u0110\u1ED5i sang ' + nextName;
   btn.setAttribute('aria-label', btn.title);
+}
+
+function showBaseLayerMenu() {
+  closeBaseLayerMenu();
+  const btn = document.querySelector('.leaflet-control-layers-toggle');
+  if (!btn) return;
+  const menu = document.createElement('div');
+  menu.id = 'baseLayerMenu';
+  menu.setAttribute('role', 'listbox');
+  menu.setAttribute('aria-label', 'Ch\u1ECDn l\u1EDBp b\u1EA3n \u0111\u1ED3 n\u1EC1n');
+
+  const layers = getAllBaseLayers();
+  layers.forEach(layer => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', layer === currentBaseLayer ? 'true' : 'false');
+    item.className = 'baseLayerMenu-item' + (layer === currentBaseLayer ? ' baseLayerMenu-item--active' : '');
+    item.textContent = getLayerDisplayName(layer);
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (layer !== currentBaseLayer) setBaseLayer(layer);
+      closeBaseLayerMenu();
+    });
+    menu.appendChild(item);
+  });
+
+  btn.parentElement.appendChild(menu);
+  setTimeout(() => {
+    document.addEventListener('click', closeBaseLayerMenu, { once: true });
+  }, 0);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeBaseLayerMenu(); });
+}
+
+function closeBaseLayerMenu() {
+  const menu = document.getElementById('baseLayerMenu');
+  if (menu) menu.remove();
 }
 
 function addBaseLayerToggleControl() {
@@ -2058,12 +2127,14 @@ function addBaseLayerToggleControl() {
       const container = L.DomUtil.create('div', 'leaflet-control-layers leaflet-control');
       const button = L.DomUtil.create('button', 'leaflet-control-layers-toggle', container);
       button.type = 'button';
-      button.setAttribute('aria-haspopup', 'false');
+      button.setAttribute('aria-haspopup', 'true');
       L.DomEvent.disableClickPropagation(container);
       L.DomEvent.disableScrollPropagation(container);
       L.DomEvent.on(button, 'click', (event) => {
         L.DomEvent.preventDefault(event);
-        toggleBaseLayer();
+        const menu = document.getElementById('baseLayerMenu');
+        if (menu) { closeBaseLayerMenu(); return; }
+        showBaseLayerMenu();
       });
       setTimeout(updateBaseLayerToggleTitle, 0);
       return container;
