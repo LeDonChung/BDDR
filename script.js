@@ -37,8 +37,6 @@ let currentAuthUser = null;
 let currentDataProfile = null;
 let appStarted = false;
 let permissionModalAction = null;
-let sharedLocationHandled = false;
-let isPublicShareMode = false;
 let baseLayerMenuOutsideHandler = null;
 let baseLayerMenuKeyHandler = null;
 const areaMeasureState = {
@@ -462,7 +460,6 @@ async function startAppForUser(sessionResult) {
   if (!sessionResult || !sessionResult.profile || !sessionResult.user) {
     throw new Error('Phiên đăng nhập không hợp lệ');
   }
-  const sharedLocation = getSharedLocationFromUrl();
   const profile = userToProfile(sessionResult.user) || sessionResult.profile;
   if (!profile) {
     throw new Error('Mã đăng nhập chưa có cấu hình dữ liệu');
@@ -480,15 +477,13 @@ async function startAppForUser(sessionResult) {
   startSessionKeepalive();
 
   if (appStarted) {
-    if (sharedLocation && !sharedLocationHandled) openSharedLocation(sharedLocation);
     return;
   }
   appStarted = true;
   initMap();
   bindLocateButton();
   startCompassOnAppOpen();
-  if (sharedLocation) openSharedLocation(sharedLocation);
-  const shouldPanToLocation = !sharedLocation && !loadAppState();
+  const shouldPanToLocation = !loadAppState();
   // Lưu log lần đầu ngay khi đăng nhập thành công (không phụ thuộc GPS / quyền vị trí)
   // Lần 2 (có GPS) sẽ được locateUser tự ghi khi user vừa cấp quyền vị trí
   writeLoginAccessLog(null);
@@ -1116,12 +1111,6 @@ function initInfoModal() {
 
 async function bootstrapApp() {
   cleanupLegacyStorageKeys();
-  const sharedLocation = getSharedLocationFromUrl();
-  if (sharedLocation) {
-    startPublicShareMode(sharedLocation);
-    return;
-  }
-
   initLoginUI();
   initInfoModal();
   setLoginBusy(true, 'Đang kiểm tra phiên đăng nhập...');
@@ -1152,25 +1141,6 @@ async function bootstrapApp() {
   }
 
   showLoginScreen('');
-}
-
-function startPublicShareMode(sharedLocation) {
-  isPublicShareMode = true;
-  document.body.classList.add('public-share-mode');
-
-  const brandName = $('appBrandName');
-  const subtitle = $('appSubtitle');
-  if (brandName) brandName.textContent = 'Đoàn Kinh tế - Quốc phòng 75';
-  if (subtitle) subtitle.textContent = 'Bản đồ vị trí được chia sẻ';
-
-  hideLoginScreen();
-  if (!appStarted) {
-    appStarted = true;
-    initMap();
-    bindLocateButton();
-    startCompassOnAppOpen();
-  }
-  openSharedLocation(sharedLocation);
 }
 
 // ===== TILE LAYERS =====
@@ -1542,7 +1512,6 @@ async function loadGeoJSONFallback(source) {
 }
 
 async function loadDefaultKML() {
-  if (isPublicShareMode) return;
   if (kmlLoaded) {
     scheduleVisibleKMLRender();
     return;
@@ -1782,7 +1751,7 @@ function saveAppStateDebounced() {
 }
 
 function saveAppState() {
-  if (!map || isPublicShareMode) return;
+  if (!map) return;
   const center = map.getCenter();
   const bearing = (typeof map.getBearing === 'function') ? map.getBearing() : 0;
   localStorage.setItem(getAppStateKey(), JSON.stringify({
@@ -2052,7 +2021,6 @@ function flattenLatLngs(latlngs) {
 }
 
 function scheduleKMLLoad() {
-  if (isPublicShareMode) return;
   if (kmlLoaded) {
     scheduleVisibleKMLRender();
     return;
@@ -2621,7 +2589,6 @@ function parseCoords(coordNodes) {
 }
 
 function initParcelSearch() {
-  if (isPublicShareMode) return;
   const input = $('parcelSearchInput');
   const suggestions = $('parcelSearchSuggestions');
   const clearBtn = $('parcelSearchClearBtn');
@@ -3073,7 +3040,6 @@ function attachFeatureHandlers(layer) {
 
 function onFeatureClick(e) {
   if (e.originalEvent) L.DomEvent.stop(e);
-  if (isPublicShareMode) return;
   if (isAreaMeasureActive()) {
     handleAreaMeasureMapClick(e.latlng);
     return;
@@ -3156,70 +3122,16 @@ function findRenderedFeatureAt(latlng) {
   return best;
 }
 
-function isValidSharedLatLng(lat, lng) {
-  return Number.isFinite(lat) && Number.isFinite(lng) &&
-    lat >= -90 && lat <= 90 &&
-    lng >= -180 && lng <= 180;
-}
-
-function normalizeShareZoom(value) {
-  const zoom = Number(value);
-  if (!Number.isFinite(zoom)) return 18;
-  return Math.max(2, Math.min(21, zoom));
-}
-
-function getSharedLocationFromUrl() {
-  const params = new URLSearchParams(window.location.search || '');
-  let lat = Number(params.get('lat'));
-  let lng = Number(params.get('lng'));
-  let zoom = params.get('z') || params.get('zoom');
-
-  const compact = params.get('s');
-  if ((!Number.isFinite(lat) || !Number.isFinite(lng)) && compact) {
-    const parts = compact.split(',').map(part => part.trim());
-    lat = Number(parts[0]);
-    lng = Number(parts[1]);
-    zoom = parts[2] || zoom;
-  }
-
-  const hasShareParams = params.get('share') === '1' ||
-    params.has('lat') ||
-    params.has('lng') ||
-    !!compact;
-  if (!hasShareParams || !isValidSharedLatLng(lat, lng)) return null;
-
-  const label = String(params.get('label') || '').trim().slice(0, 120);
-  const desc = String(params.get('desc') || '').trim().slice(0, 180);
-  return {
-    lat,
-    lng,
-    zoom: normalizeShareZoom(zoom),
-    label,
-    desc
-  };
-}
-
-function createShareUrl(destination) {
+function createGoogleMapsLocationUrl(destination) {
   const latlng = normalizeDestinationLatLng(destination.latlng);
   const lat = Number(latlng[0]);
   const lng = Number(latlng[1]);
-  if (!isValidSharedLatLng(lat, lng)) return '';
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+    lat < -90 || lat > 90 ||
+    lng < -180 || lng > 180) return '';
 
-  const url = new URL(window.location.href);
-  url.hash = '';
-  url.searchParams.delete('s');
-  url.searchParams.set('share', '1');
-  url.searchParams.set('lat', lat.toFixed(6));
-  url.searchParams.set('lng', lng.toFixed(6));
-  url.searchParams.set('z', String(map ? Number(map.getZoom()).toFixed(2).replace(/\.00$/, '') : 18));
-
-  const label = String(destination.name || '').trim();
-  const desc = String(destination.desc || '').trim();
-  if (label && label !== 'Điểm đã chọn') url.searchParams.set('label', label.slice(0, 120));
-  else url.searchParams.delete('label');
-  if (desc && desc !== formatLatLng({ lat, lng })) url.searchParams.set('desc', desc.slice(0, 180));
-  else url.searchParams.delete('desc');
-  return url.toString();
+  return 'https://www.google.com/maps/search/?api=1&query=' +
+    encodeURIComponent(lat.toFixed(6) + ',' + lng.toFixed(6));
 }
 
 async function copyTextToClipboard(text) {
@@ -3240,29 +3152,19 @@ async function copyTextToClipboard(text) {
   if (!ok) throw new Error('Không thể copy link');
 }
 
-async function shareLocation(destination) {
-  const url = createShareUrl(destination);
+async function copyGoogleMapsLocationLink(destination) {
+  const url = createGoogleMapsLocationUrl(destination);
   if (!url) {
-    showToast('Không thể tạo link địa điểm');
+    showToast('Không thể tạo link Google Maps');
     return;
   }
 
   try {
     await copyTextToClipboard(url);
-    showToast('Đã sao chép link địa điểm', 2600);
+    showToast('Đã sao chép link Google Maps', 2600);
   } catch (err) {
-    showToast(err.message || 'Không thể sao chép link địa điểm', 3200);
+    showToast(err.message || 'Không thể sao chép link Google Maps', 3200);
   }
-}
-
-function openSharedLocation(shared) {
-  if (!map || !shared) return;
-  sharedLocationHandled = true;
-  const latlng = L.latLng(shared.lat, shared.lng);
-
-  map.setView(latlng, shared.zoom || 18, { animate: true });
-  showSelectedLandmark(latlng);
-  showToast('Đã mở địa điểm được chia sẻ', 2600);
 }
 
 function showRouteChoicePopup(destination) {
@@ -3297,11 +3199,7 @@ function showRouteChoicePopup(destination) {
     if (typeof openGoogleMapsRoute === 'function') openGoogleMapsRoute(latlng, title);
   };
   const onShare = () => {
-    shareLocation({
-      latlng,
-      name: title,
-      desc: destination.desc || ''
-    });
+    copyGoogleMapsLocationLink({ latlng });
   };
 
   // Re-bind handlers each time so they use the latest latlng/title.
