@@ -300,6 +300,12 @@ html, body {
   border-color: rgba(96, 165, 250, 0.48) !important;
   box-shadow: 0 12px 28px rgba(0,0,0,0.34), 0 0 0 1px rgba(96,165,250,0.18) !important;
 }
+.map-utility-controls .icon-btn.icon-btn--active {
+  background: var(--accent) !important;
+  color: #172033 !important;
+  border-color: rgba(255, 216, 77, 0.86) !important;
+  box-shadow: 0 14px 30px rgba(0,0,0,0.34), 0 0 0 3px rgba(255, 216, 77, 0.18) !important;
+}
 .map-utility-controls .icon-btn svg {
   width: 20px;
   height: 20px;
@@ -307,6 +313,111 @@ html, body {
 }
 .is-driving .map-utility-controls {
   display: none;
+}
+.is-driving .area-measure-panel {
+  display: none;
+}
+
+/* ====== AREA MEASURE ====== */
+.area-measure-panel {
+  position: absolute;
+  left: 14px;
+  bottom: 18px;
+  z-index: 870;
+  width: min(310px, calc(100% - 28px));
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 13px;
+  box-shadow: 0 14px 32px rgba(0,0,0,0.34);
+  color: #f8fafc;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.area-measure-panel[hidden] { display: none; }
+.area-measure-panel__main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.area-measure-panel__main span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.area-measure-panel__main strong {
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+.area-measure-panel__meta {
+  grid-column: 1 / -1;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.area-measure-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.area-measure-panel__actions .icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.07);
+}
+.area-measure-panel__actions .icon-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
+}
+.leaflet-container.is-measuring-area,
+.leaflet-container.is-measuring-area .leaflet-interactive {
+  cursor: crosshair;
+}
+.area-measure-point {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #172033;
+  background: var(--accent);
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 8px 18px rgba(0,0,0,0.38);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+}
+.area-measure-point--start {
+  background: #22c55e;
+  color: #052e16;
+}
+.area-measure-point--closed {
+  background: #38bdf8;
+  color: #082f49;
+}
+.area-measure-segment-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 4px 7px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  box-shadow: 0 8px 18px rgba(0,0,0,0.28);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 /* ====== MAP ====== */

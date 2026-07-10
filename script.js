@@ -37,6 +37,12 @@ let currentAuthUser = null;
 let currentDataProfile = null;
 let appStarted = false;
 let permissionModalAction = null;
+const areaMeasureState = {
+  active: false,
+  closed: false,
+  points: [],
+  layer: null
+};
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
@@ -83,6 +89,8 @@ const KML_CODE_LABEL_MIN_PARTS = 40;
 const KML_CODE_LABEL_MAX_PARTS = 950;
 const KML_CODE_LABEL_LINE_PADDING = 0.00075;
 const FEATURE_CLICK_TOLERANCE_PX = 18;
+const AREA_MEASURE_CLOSE_TOLERANCE_PX = 24;
+const EARTH_RADIUS_M = 6378137;
 const VECTOR_STROKE_WEIGHT = Object.freeze({ detail: 1.15, normal: 1.45 });
 const TRUSO_VECTOR_STROKE_WIDTH = Object.freeze({ detail: 2.6, normal: 4.2 });
 const TRUSO_KML_STROKE_WEIGHT = Object.freeze({ satellite: 4.2, street: 4.6 });
@@ -786,6 +794,291 @@ function initMapUtilityControls() {
   });
 }
 
+function initAreaMeasureTool() {
+  if (!map || areaMeasureState.layer) return;
+  areaMeasureState.layer = L.layerGroup().addTo(map);
+
+  const measureBtn = $('areaMeasureBtn');
+  const undoBtn = $('areaUndoBtn');
+  const clearBtn = $('areaClearBtn');
+  const panel = $('areaMeasurePanel');
+
+  if (measureBtn) {
+    measureBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      setAreaMeasureMode(!areaMeasureState.active);
+    });
+  }
+  if (undoBtn) {
+    undoBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      undoAreaMeasurePoint();
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      resetAreaMeasurement();
+    });
+  }
+  if (panel) {
+    ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach(type => {
+      panel.addEventListener(type, (event) => {
+        event.stopPropagation();
+        if (typeof L !== 'undefined' && L.DomEvent) L.DomEvent.stopPropagation(event);
+      });
+    });
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && areaMeasureState.active) {
+      setAreaMeasureMode(false);
+    }
+  });
+
+  updateAreaMeasureUI();
+}
+
+function isAreaMeasureActive() {
+  return !!areaMeasureState.active;
+}
+
+function setAreaMeasureMode(active) {
+  const nextActive = !!active;
+  if (areaMeasureState.active === nextActive) return;
+
+  areaMeasureState.active = nextActive;
+  if (nextActive) {
+    if (typeof closeRouteChoiceModal === 'function') closeRouteChoiceModal();
+    if (selectedLandmarkMarker && map) {
+      map.removeLayer(selectedLandmarkMarker);
+      selectedLandmarkMarker = null;
+    }
+    showToast('Đang đo diện tích: chọn các điểm trên bản đồ', 2600);
+  } else {
+    resetAreaMeasurement();
+  }
+  updateAreaMeasureUI();
+}
+
+function resetAreaMeasurement() {
+  areaMeasureState.points = [];
+  areaMeasureState.closed = false;
+  renderAreaMeasurement();
+  updateAreaMeasureUI();
+}
+
+function undoAreaMeasurePoint() {
+  if (!areaMeasureState.points.length) return;
+  areaMeasureState.closed = false;
+  areaMeasureState.points.pop();
+  renderAreaMeasurement();
+  updateAreaMeasureUI();
+}
+
+function handleAreaMeasureMapClick(latlng) {
+  if (!latlng || !areaMeasureState.active) return;
+
+  if (areaMeasureState.closed) {
+    resetAreaMeasurement();
+  } else if (shouldCloseAreaMeasurement(latlng)) {
+    closeAreaMeasurement();
+    return;
+  }
+
+  addAreaMeasurePoint(latlng);
+}
+
+function addAreaMeasurePoint(latlng) {
+  areaMeasureState.points.push(L.latLng(latlng));
+  areaMeasureState.closed = false;
+  renderAreaMeasurement();
+  updateAreaMeasureUI();
+}
+
+function shouldCloseAreaMeasurement(latlng) {
+  if (!map || areaMeasureState.closed || areaMeasureState.points.length < 3) return false;
+  const first = areaMeasureState.points[0];
+  const firstPoint = map.latLngToContainerPoint(first);
+  const clickPoint = map.latLngToContainerPoint(latlng);
+  return firstPoint.distanceTo(clickPoint) <= AREA_MEASURE_CLOSE_TOLERANCE_PX;
+}
+
+function closeAreaMeasurement() {
+  if (areaMeasureState.points.length < 3) {
+    showToast('Cần ít nhất 3 điểm để tính diện tích');
+    return;
+  }
+  areaMeasureState.closed = true;
+  renderAreaMeasurement();
+  updateAreaMeasureUI();
+  const metrics = getAreaMeasureMetrics();
+  showToast('Diện tích: ' + formatMeasureArea(metrics.areaM2), 3600);
+}
+
+function renderAreaMeasurement() {
+  const group = areaMeasureState.layer;
+  if (!group) return;
+  group.clearLayers();
+
+  const points = areaMeasureState.points;
+  if (!points.length) return;
+
+  if (areaMeasureState.closed && points.length >= 3) {
+    L.polygon(points, {
+      color: '#ffd84d',
+      weight: 2,
+      opacity: 0.95,
+      fillColor: '#ffd84d',
+      fillOpacity: 0.16,
+      interactive: false,
+      bubblingMouseEvents: false
+    }).addTo(group);
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    addAreaMeasureSegment(points[i - 1], points[i], false, group);
+  }
+  if (areaMeasureState.closed && points.length >= 3) {
+    addAreaMeasureSegment(points[points.length - 1], points[0], true, group);
+  }
+
+  points.forEach((point, index) => {
+    const isFirst = index === 0;
+    const canClose = isFirst && !areaMeasureState.closed && points.length >= 3;
+    const marker = L.marker(point, {
+      icon: createAreaMeasurePointIcon(index + 1, isFirst, areaMeasureState.closed),
+      interactive: canClose,
+      keyboard: false,
+      zIndexOffset: 1000,
+      bubblingMouseEvents: false
+    }).addTo(group);
+
+    if (canClose) {
+      marker.on('click', (event) => {
+        if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+        closeAreaMeasurement();
+      });
+    }
+  });
+}
+
+function addAreaMeasureSegment(from, to, isClosingSegment, group) {
+  L.polyline([from, to], {
+    color: isClosingSegment ? '#22c55e' : '#ffd84d',
+    weight: isClosingSegment ? 3.5 : 3,
+    opacity: 0.96,
+    dashArray: isClosingSegment ? '7 7' : null,
+    lineCap: 'round',
+    lineJoin: 'round',
+    interactive: false,
+    bubblingMouseEvents: false
+  }).addTo(group);
+
+  const distance = from.distanceTo(to);
+  L.marker(getAreaMeasureMidpoint(from, to), {
+    icon: L.divIcon({
+      className: 'area-measure-segment-label',
+      html: escapeHtml(formatMeasureDistance(distance)),
+      iconSize: [88, 24],
+      iconAnchor: [44, 12]
+    }),
+    interactive: false,
+    keyboard: false,
+    zIndexOffset: 990
+  }).addTo(group);
+}
+
+function createAreaMeasurePointIcon(number, isFirst, isClosed) {
+  const classes = ['area-measure-point'];
+  if (isFirst) classes.push('area-measure-point--start');
+  if (isClosed) classes.push('area-measure-point--closed');
+  return L.divIcon({
+    className: '',
+    html: '<div class="' + classes.join(' ') + '">' + escapeHtml(number) + '</div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+}
+
+function getAreaMeasureMidpoint(from, to) {
+  return L.latLng((from.lat + to.lat) / 2, (from.lng + to.lng) / 2);
+}
+
+function getAreaMeasureMetrics() {
+  const points = areaMeasureState.points;
+  let perimeterM = 0;
+  for (let i = 1; i < points.length; i++) {
+    perimeterM += points[i - 1].distanceTo(points[i]);
+  }
+  if (areaMeasureState.closed && points.length >= 3) {
+    perimeterM += points[points.length - 1].distanceTo(points[0]);
+  }
+
+  return {
+    perimeterM,
+    areaM2: areaMeasureState.closed ? calculateGeodesicArea(points) : 0
+  };
+}
+
+function calculateGeodesicArea(points) {
+  if (!points || points.length < 3) return 0;
+
+  const d2r = Math.PI / 180;
+  let area = 0;
+  for (let i = 0, len = points.length; i < len; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % len];
+    area += ((p2.lng - p1.lng) * d2r) *
+      (2 + Math.sin(p1.lat * d2r) + Math.sin(p2.lat * d2r));
+  }
+  return Math.abs(area * EARTH_RADIUS_M * EARTH_RADIUS_M / 2);
+}
+
+function formatMeasureDistance(meters) {
+  const km = Math.max(0, Number(meters) || 0) / 1000;
+  if (km < 1) return km.toFixed(3) + ' km';
+  if (km < 10) return km.toFixed(2) + ' km';
+  return km.toFixed(1) + ' km';
+}
+
+function formatMeasureArea(squareMeters) {
+  const km2 = Math.max(0, Number(squareMeters) || 0) / 1000000;
+  if (km2 < 0.01) return km2.toFixed(4) + ' km2';
+  if (km2 < 1) return km2.toFixed(3) + ' km2';
+  if (km2 < 10) return km2.toFixed(2) + ' km2';
+  return km2.toFixed(1) + ' km2';
+}
+
+function updateAreaMeasureUI() {
+  const panel = $('areaMeasurePanel');
+  const measureBtn = $('areaMeasureBtn');
+  const undoBtn = $('areaUndoBtn');
+  const clearBtn = $('areaClearBtn');
+  const countEl = $('areaMeasureCount');
+  const areaEl = $('areaMeasureArea');
+  const perimeterEl = $('areaMeasurePerimeter');
+  const active = areaMeasureState.active;
+  const pointCount = areaMeasureState.points.length;
+  const metrics = getAreaMeasureMetrics();
+
+  if (panel) panel.hidden = !active;
+  if (measureBtn) {
+    measureBtn.classList.toggle('icon-btn--active', active);
+    measureBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+  if (map && map.getContainer()) {
+    map.getContainer().classList.toggle('is-measuring-area', active);
+  }
+  if (undoBtn) undoBtn.disabled = pointCount === 0;
+  if (clearBtn) clearBtn.disabled = pointCount === 0;
+  if (countEl) countEl.textContent = pointCount + ' điểm' + (areaMeasureState.closed ? '' : '');
+  if (areaEl) areaEl.textContent = areaMeasureState.closed ? formatMeasureArea(metrics.areaM2) : '-- km2';
+  if (perimeterEl) {
+    perimeterEl.textContent = 'Chu vi: ' + (metrics.perimeterM > 0 ? formatMeasureDistance(metrics.perimeterM) : '-- km');
+  }
+}
+
 function initInfoModal() {
   const infoBtn = $('infoBtn');
   const closeBtn = $('infoModalCloseBtn');
@@ -930,6 +1223,8 @@ function initMap() {
   currentBaseLayer.addTo(map);
 
   addBaseLayerToggleControl();
+  initMapUtilityControls();
+  initAreaMeasureTool();
 
   map.on('movestart', cancelKMLRender);
   map.on('zoomstart', onKMLZoomStart);
@@ -2713,6 +3008,7 @@ function selectParcelSearchResult(index) {
 function attachFeatureHandlers(layer) {
   layer.on('click', onFeatureClick);
   layer.on('mouseover', () => {
+    if (isAreaMeasureActive()) return;
     if (map && map.getContainer()) map.getContainer().classList.add('is-selecting-feature');
   });
   layer.on('mouseout', () => {
@@ -2722,6 +3018,10 @@ function attachFeatureHandlers(layer) {
 
 function onFeatureClick(e) {
   if (e.originalEvent) L.DomEvent.stop(e);
+  if (isAreaMeasureActive()) {
+    handleAreaMeasureMapClick(e.latlng);
+    return;
+  }
   const layer = e.target;
   selectFeature(layer, e.latlng);
 }
@@ -2729,6 +3029,11 @@ function onFeatureClick(e) {
 function onMapBackgroundClick(e) {
   // Ignore clicks on floating UI controls.
   if (e.originalEvent.target.closest('#compassModeBtn, #navDriveCompassModeBtn, .map-utility-controls, .leaflet-control')) return;
+
+  if (isAreaMeasureActive()) {
+    handleAreaMeasureMapClick(e.latlng);
+    return;
+  }
 
   const hit = findRenderedFeatureAt(e.latlng);
   if (hit) {
