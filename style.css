@@ -1682,3 +1682,28 @@ html, body {
   background: rgba(96, 165, 250, 0.12);
   font-weight: 700;
 }
+
+/* ===== Public shared location mode ===== */
+.public-share-mode .app-header {
+  justify-content: space-between;
+}
+.public-share-mode .app-title {
+  display: block !important;
+}
+.public-share-mode .app-title h1 {
+  font-size: 15px;
+  line-height: 1.15;
+}
+.public-share-mode .app-title p {
+  display: block !important;
+}
+.public-share-mode .app-search,
+.public-share-mode #accountBtn,
+.public-share-mode #resetBtn,
+.public-share-mode #infoBtn,
+.public-share-mode #helpBtn,
+.public-share-mode #areaMeasureBtn,
+.public-share-mode .area-measure-panel,
+.public-share-mode .onboarding-overlay {
+  display: none !important;
+}

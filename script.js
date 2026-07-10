@@ -38,6 +38,7 @@ let currentDataProfile = null;
 let appStarted = false;
 let permissionModalAction = null;
 let sharedLocationHandled = false;
+let isPublicShareMode = false;
 const areaMeasureState = {
   active: false,
   closed: false,
@@ -1113,6 +1114,12 @@ function initInfoModal() {
 
 async function bootstrapApp() {
   cleanupLegacyStorageKeys();
+  const sharedLocation = getSharedLocationFromUrl();
+  if (sharedLocation) {
+    startPublicShareMode(sharedLocation);
+    return;
+  }
+
   initLoginUI();
   initInfoModal();
   setLoginBusy(true, 'Đang kiểm tra phiên đăng nhập...');
@@ -1143,6 +1150,25 @@ async function bootstrapApp() {
   }
 
   showLoginScreen('');
+}
+
+function startPublicShareMode(sharedLocation) {
+  isPublicShareMode = true;
+  document.body.classList.add('public-share-mode');
+
+  const brandName = $('appBrandName');
+  const subtitle = $('appSubtitle');
+  if (brandName) brandName.textContent = 'Đoàn Kinh tế - Quốc phòng 75';
+  if (subtitle) subtitle.textContent = 'Bản đồ vị trí được chia sẻ';
+
+  hideLoginScreen();
+  if (!appStarted) {
+    appStarted = true;
+    initMap();
+    bindLocateButton();
+    startCompassOnAppOpen();
+  }
+  openSharedLocation(sharedLocation);
 }
 
 // ===== TILE LAYERS =====
@@ -1238,6 +1264,7 @@ function initMap() {
   map.on('zoomend', () => {
     if (currentBaseLayer === terrain3DLayer && map.getZoom() > terrain3DLayer.options.maxZoom) {
       map.setZoom(terrain3DLayer.options.maxZoom, { animate: true });
+      return;
     }
     scheduleVisibleKMLRender(320);
     saveAppStateDebounced();
@@ -1513,6 +1540,7 @@ async function loadGeoJSONFallback(source) {
 }
 
 async function loadDefaultKML() {
+  if (isPublicShareMode) return;
   if (kmlLoaded) {
     scheduleVisibleKMLRender();
     return;
@@ -1752,7 +1780,7 @@ function saveAppStateDebounced() {
 }
 
 function saveAppState() {
-  if (!map) return;
+  if (!map || isPublicShareMode) return;
   const center = map.getCenter();
   const bearing = (typeof map.getBearing === 'function') ? map.getBearing() : 0;
   localStorage.setItem(getAppStateKey(), JSON.stringify({
@@ -2022,6 +2050,7 @@ function flattenLatLngs(latlngs) {
 }
 
 function scheduleKMLLoad() {
+  if (isPublicShareMode) return;
   if (kmlLoaded) {
     scheduleVisibleKMLRender();
     return;
@@ -2363,6 +2392,9 @@ function isLayerTerrain(layer) {
 
 function setBaseLayer(layer) {
   if (!map || !layer || currentBaseLayer === layer) return;
+  if (layer === terrain3DLayer && map.getZoom() > terrain3DLayer.options.maxZoom) {
+    map.setZoom(terrain3DLayer.options.maxZoom, { animate: false });
+  }
   if (currentBaseLayer && map.hasLayer(currentBaseLayer)) {
     map.removeLayer(currentBaseLayer);
   }
@@ -2570,6 +2602,7 @@ function parseCoords(coordNodes) {
 }
 
 function initParcelSearch() {
+  if (isPublicShareMode) return;
   const input = $('parcelSearchInput');
   const suggestions = $('parcelSearchSuggestions');
   const clearBtn = $('parcelSearchClearBtn');
@@ -3021,6 +3054,7 @@ function attachFeatureHandlers(layer) {
 
 function onFeatureClick(e) {
   if (e.originalEvent) L.DomEvent.stop(e);
+  if (isPublicShareMode) return;
   if (isAreaMeasureActive()) {
     handleAreaMeasureMapClick(e.latlng);
     return;
