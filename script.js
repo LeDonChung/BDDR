@@ -1036,18 +1036,15 @@ function calculateGeodesicArea(points) {
 }
 
 function formatMeasureDistance(meters) {
-  const km = Math.max(0, Number(meters) || 0) / 1000;
-  if (km < 1) return km.toFixed(3) + ' km';
-  if (km < 10) return km.toFixed(2) + ' km';
-  return km.toFixed(1) + ' km';
+  const value = Math.max(0, Number(meters) || 0);
+  if (value < 10) return value.toFixed(1) + ' m';
+  return Math.round(value).toLocaleString('vi-VN') + ' m';
 }
 
 function formatMeasureArea(squareMeters) {
-  const km2 = Math.max(0, Number(squareMeters) || 0) / 1000000;
-  if (km2 < 0.01) return km2.toFixed(4) + ' km2';
-  if (km2 < 1) return km2.toFixed(3) + ' km2';
-  if (km2 < 10) return km2.toFixed(2) + ' km2';
-  return km2.toFixed(1) + ' km2';
+  const value = Math.max(0, Number(squareMeters) || 0);
+  if (value < 100) return value.toFixed(1) + ' m2';
+  return Math.round(value).toLocaleString('vi-VN') + ' m2';
 }
 
 function updateAreaMeasureUI() {
@@ -1073,9 +1070,9 @@ function updateAreaMeasureUI() {
   if (undoBtn) undoBtn.disabled = pointCount === 0;
   if (clearBtn) clearBtn.disabled = pointCount === 0;
   if (countEl) countEl.textContent = pointCount + ' điểm' + (areaMeasureState.closed ? '' : '');
-  if (areaEl) areaEl.textContent = areaMeasureState.closed ? formatMeasureArea(metrics.areaM2) : '-- km2';
+  if (areaEl) areaEl.textContent = areaMeasureState.closed ? formatMeasureArea(metrics.areaM2) : '-- m2';
   if (perimeterEl) {
-    perimeterEl.textContent = 'Chu vi: ' + (metrics.perimeterM > 0 ? formatMeasureDistance(metrics.perimeterM) : '-- km');
+    perimeterEl.textContent = 'Chu vi: ' + (metrics.perimeterM > 0 ? formatMeasureDistance(metrics.perimeterM) : '-- m');
   }
 }
 
