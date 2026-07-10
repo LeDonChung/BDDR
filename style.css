@@ -855,6 +855,14 @@ html, body {
 .modal__actions--single {
   grid-template-columns: 1fr;
 }
+.route-choice__actions {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 10px;
+}
+.route-choice__share {
+  grid-column: 1 / -1;
+}
 
 /* ====== INFO MODAL ====== */
 .info-team-picker {

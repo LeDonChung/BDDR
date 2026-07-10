@@ -270,6 +270,890 @@ async function requireAdmin(request, env) {
   return { user };
 }
 
+function renderDashboardPage() {
+  return `<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BDDR Tong - Dashboard</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b1220;
+    --panel: #111a2c;
+    --panel-2: #18233a;
+    --line: rgba(255,255,255,.08);
+    --line-strong: rgba(148,163,184,.22);
+    --text: #e8eef7;
+    --muted: #9aa6bd;
+    --accent: #ffd84d;
+    --primary: #4f8cff;
+    --danger: #ff5b5b;
+    --ok: #22c55e;
+    --shadow: 0 18px 50px rgba(0,0,0,.34);
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    font-family: Arial, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; }
+  [hidden] { display: none !important; }
+  .login-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+  }
+  .login-card {
+    width: min(420px, 100%);
+    display: grid;
+    gap: 14px;
+    padding: 24px;
+    background: rgba(17,26,44,.98);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+  .brand-mark {
+    width: 42px;
+    height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #101827;
+    background: var(--accent);
+    border-radius: 11px;
+    font-weight: 800;
+  }
+  .login-card h1, .page-title h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+  .login-card p, .page-title p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+  .field { display: grid; gap: 6px; }
+  .field span, .check-row span { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+  input, select, textarea {
+    width: 100%;
+    color: var(--text);
+    background: rgba(255,255,255,.06);
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    outline: none;
+  }
+  input, select { height: 38px; padding: 0 11px; }
+  textarea { min-height: 76px; padding: 10px 11px; resize: vertical; }
+  input:focus, select:focus, textarea:focus {
+    border-color: rgba(79,140,255,.75);
+    background: rgba(255,255,255,.1);
+  }
+  .error-text { min-height: 18px; color: #ffb4b4; font-size: 13px; }
+  .btn {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 13px;
+    color: var(--text);
+    background: rgba(255,255,255,.07);
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn:hover { background: rgba(255,255,255,.12); }
+  .btn.primary { color: #101827; background: var(--accent); border-color: transparent; font-weight: 800; }
+  .btn.danger { color: #fff; background: rgba(255,91,91,.18); border-color: rgba(255,91,91,.4); }
+  .btn.icon { width: 38px; padding: 0; }
+  .dashboard {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 236px minmax(0, 1fr);
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 18px 14px;
+    background: rgba(15,23,42,.96);
+    border-right: 1px solid var(--line);
+  }
+  .side-brand { display: flex; align-items: center; gap: 10px; padding: 4px 4px 12px; border-bottom: 1px solid var(--line); }
+  .side-brand strong { display: block; font-size: 15px; }
+  .side-brand span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+  .side-nav { display: grid; gap: 6px; }
+  .side-nav button {
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 11px;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    text-align: left;
+  }
+  .side-nav button:hover { color: #fff; background: rgba(255,255,255,.06); }
+  .side-nav button.active {
+    color: #101827;
+    background: var(--accent);
+    border-color: transparent;
+    font-weight: 800;
+  }
+  .side-bottom { margin-top: auto; display: grid; gap: 10px; }
+  .who { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .content { min-width: 0; padding: 20px; }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 12px;
+  }
+  .search { flex: 1 1 260px; max-width: 460px; }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(320px, .9fr);
+    gap: 14px;
+    align-items: start;
+  }
+  .surface {
+    background: rgba(17,26,44,.96);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    overflow: hidden;
+  }
+  .surface-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .surface-head h2 { margin: 0; font-size: 15px; line-height: 1.25; }
+  .surface-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+  .table-wrap { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; }
+  th { color: #cbd5e1; background: rgba(255,255,255,.04); font-weight: 800; position: sticky; top: 0; z-index: 1; }
+  tr[data-code] { cursor: pointer; }
+  tr:hover td { background: rgba(255,255,255,.04); }
+  tr.selected td { background: rgba(255,216,77,.08); }
+  code { color: #e8eef7; background: rgba(255,255,255,.07); border: 1px solid var(--line); padding: 2px 6px; border-radius: 6px; font-size: 12px; }
+  .pill { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+  .pill.on { color: #052e16; background: #86efac; }
+  .pill.off { color: #450a0a; background: #fca5a5; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions .btn { min-height: 30px; padding: 0 9px; font-size: 12px; }
+  .empty { padding: 28px; color: var(--muted); text-align: center; }
+  .detail-body { padding: 14px; display: grid; gap: 14px; }
+  .detail-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .detail-title h3 { margin: 0; font-size: 18px; }
+  .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .meta-item { padding: 10px; background: rgba(255,255,255,.045); border: 1px solid var(--line); border-radius: 9px; }
+  .meta-item span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+  .meta-item strong { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 13px; }
+  .notes { color: #cbd5e1; font-size: 13px; line-height: 1.5; }
+  .session-table table { min-width: 680px; }
+  .session-block { display: grid; gap: 10px; padding-top: 4px; }
+  .session-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .session-head h2 { margin: 0; font-size: 15px; }
+  .session-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+  .log-table table { min-width: 1120px; }
+  .pagination { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+  .pagination .btn { min-height: 32px; }
+  .modal-back {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(4,8,16,.66);
+    backdrop-filter: blur(4px);
+  }
+  .modal-back.open { display: flex; }
+  .modal {
+    width: min(560px, 100%);
+    max-height: calc(100vh - 36px);
+    overflow: auto;
+    padding: 18px;
+    background: rgba(17,26,44,.99);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+  .modal h3 { margin: 0 0 12px; font-size: 18px; }
+  .form-grid { display: grid; gap: 11px; }
+  .check-row { display: flex; align-items: center; gap: 8px; }
+  .check-row input { width: 18px; height: 18px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 14px; }
+  .toast {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 80;
+    max-width: min(420px, calc(100% - 36px));
+    padding: 11px 14px;
+    background: #0f172a;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    color: #fff;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translateY(14px);
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { border-color: rgba(255,91,91,.5); background: #3b1117; }
+  .toast.ok { border-color: rgba(34,197,94,.5); background: #0f2f1b; }
+  @media (max-width: 980px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 760px) {
+    .dashboard { display: block; }
+    .sidebar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      height: auto;
+      padding: 10px;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .side-brand { display: none; }
+    .side-nav { grid-template-columns: 1fr 1fr auto; }
+    .side-nav button { justify-content: center; min-height: 38px; padding: 0 9px; }
+    .side-nav button span.label { display: inline; }
+    .side-bottom { display: none; }
+    .content { padding: 14px 10px 18px; }
+    .topbar { align-items: flex-start; }
+    .page-title h1 { font-size: 18px; }
+    .surface-head, .detail-title { align-items: flex-start; flex-direction: column; }
+    .meta-grid { grid-template-columns: 1fr; }
+    .toolbar input, .toolbar select, .toolbar .btn { flex: 1 1 100%; }
+    table { min-width: 720px; }
+    .log-table table { min-width: 1080px; }
+    .toast { left: 10px; right: 10px; bottom: 10px; max-width: none; }
+  }
+</style>
+</head>
+<body>
+  <section id="loginShell" class="login-shell">
+    <form id="loginCard" class="login-card" autocomplete="off">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="brand-mark">BD</div>
+        <div>
+          <h1>Dashboard quản trị</h1>
+          <p>Đăng nhập bằng tài khoản tổng để quản lý người dùng và log truy cập.</p>
+        </div>
+      </div>
+      <label class="field">
+        <span>Mã đăng nhập</span>
+        <input id="loginCode" type="text" autocomplete="username" spellcheck="false" />
+      </label>
+      <button id="loginBtn" class="btn primary" type="submit">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/></svg>
+        Đăng nhập
+      </button>
+      <div id="loginErr" class="error-text" role="alert"></div>
+    </form>
+  </section>
+
+  <section id="app" class="dashboard" hidden>
+    <aside class="sidebar">
+      <div class="side-brand">
+        <div class="brand-mark">BD</div>
+        <div>
+          <strong>BDDR Tong</strong>
+          <span>Dashboard quản trị</span>
+        </div>
+      </div>
+      <nav class="side-nav" aria-label="Điều hướng dashboard">
+        <button type="button" data-view="users">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span class="label">Người dùng</span>
+        </button>
+        <button type="button" data-view="logs">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+          <span class="label">Logs</span>
+        </button>
+        <button id="sidebarLogout" type="button">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+          <span class="label">Đăng xuất</span>
+        </button>
+      </nav>
+      <div class="side-bottom">
+        <div id="who" class="who"></div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="topbar">
+        <div class="page-title">
+          <h1 id="pageTitle">Người dùng</h1>
+          <p id="pageSubtitle">Quản lý mã đăng nhập, trạng thái và phiên hoạt động.</p>
+        </div>
+      </div>
+
+      <section id="panel-users" class="panel">
+        <div class="toolbar">
+          <input id="userSearch" class="search" type="search" placeholder="Tìm theo mã, tên đội, folder..." />
+          <button id="userAdd" class="btn primary" type="button">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            Thêm user
+          </button>
+          <button id="userReload" class="btn" type="button">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+            Tải lại
+          </button>
+        </div>
+        <div class="grid">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Danh sách người dùng</h2>
+                <p id="userSummary">Đang tải...</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table id="userTable">
+                <thead><tr>
+                  <th>Mã</th><th>Tên đội</th><th>Folder</th><th>Short label</th><th>Trạng thái</th><th>Cập nhật</th><th></th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="surface" id="userDetail">
+            <div class="surface-head">
+              <div>
+                <h2>Chi tiết người dùng</h2>
+                <p>Thông tin cấu hình và session của user được chọn.</p>
+              </div>
+            </div>
+            <div id="userDetailBody" class="detail-body"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="panel-logs" class="panel">
+        <div class="toolbar">
+          <select id="logSelect" aria-label="Lọc người dùng"></select>
+          <input id="logLimit" type="number" min="1" max="500" value="100" aria-label="Số dòng" />
+          <button id="logReload" class="btn" type="button">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+            Tải lại
+          </button>
+          <button id="logClearPage" class="btn danger" type="button">Xóa log đang hiển thị</button>
+        </div>
+        <section class="surface">
+          <div class="surface-head">
+            <div>
+              <h2>Logs đăng nhập</h2>
+              <p id="logSummary">Thời gian hiển thị theo giờ Việt Nam (GMT+7).</p>
+            </div>
+            <div class="pagination">
+              <button id="logPrev" class="btn" type="button">Trước</button>
+              <span id="logPageInfo">Trang 1 / 1</span>
+              <button id="logNext" class="btn" type="button">Sau</button>
+            </div>
+          </div>
+          <div class="table-wrap log-table">
+            <table id="logTable">
+              <thead><tr>
+                <th>#</th><th>Thời gian</th><th>Mã</th><th>Đơn vị</th><th>Tên hiển thị</th><th>IP</th><th>Trình duyệt</th><th>HĐH</th><th>Ngôn ngữ</th><th>Tọa độ</th><th>Sai số</th><th>Trạng thái</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+  </section>
+
+  <div class="modal-back" id="modal">
+    <div class="modal">
+      <h3 id="modalTitle">Thêm user</h3>
+      <form id="userForm" class="form-grid">
+        <label class="field"><span>Mã đăng nhập *</span><input name="code" required pattern="[a-z0-9_-]{1,80}" /></label>
+        <label class="field"><span>Tên đội / đơn vị *</span><input name="team" required maxlength="120" /></label>
+        <label class="field"><span>Folder dữ liệu *</span><input name="folder" required maxlength="80" placeholder="vd: doi01, main" /></label>
+        <label class="field"><span>Short label</span><input name="shortLabel" maxlength="120" /></label>
+        <label class="field"><span>Subtitle</span><input name="subtitle" maxlength="200" /></label>
+        <label class="field"><span>Ghi chú</span><textarea name="notes" rows="2" maxlength="500"></textarea></label>
+        <label class="check-row"><input type="checkbox" name="isActive" checked /> <span>Đang hoạt động</span></label>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close>Hủy</button>
+          <button type="submit" class="btn primary" id="modalSave">Lưu</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const BASE = location.origin;
+const ADMIN_CODE = 'ledonchung';
+const TOKEN_KEY = 'bddr-admin-token';
+let adminToken = localStorage.getItem(TOKEN_KEY) || null;
+let allUsers = [];
+let selectedUserCode = '';
+let currentView = location.pathname === '/logs' ? 'logs' : 'users';
+let currentLogIds = [];
+let logPage = 1;
+let logTotalPages = 1;
+
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function toast(msg, kind) {
+  const t = $('#toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.className = 'toast show ' + (kind || '');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => t.className = 'toast ' + (kind || ''), 2400);
+}
+
+async function api(path, options) {
+  options = options || {};
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+  if (adminToken) headers.Authorization = 'Bearer ' + adminToken;
+  const response = await fetch(BASE + path, Object.assign({}, options, { headers }));
+  const ct = response.headers.get('content-type') || '';
+  const body = ct.includes('application/json') ? await response.json() : await response.text();
+  if (!response.ok || body.ok === false) throw new Error((body && body.error) || ('HTTP ' + response.status));
+  return body;
+}
+
+function setLoggedInUI(token, userCode) {
+  adminToken = token;
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  $('#loginShell').hidden = true;
+  $('#app').hidden = false;
+  $('#who').textContent = 'Đăng nhập: ' + userCode;
+  loadAll().then(() => setView(currentView));
+}
+
+function setLoggedOutUI() {
+  adminToken = null;
+  localStorage.removeItem(TOKEN_KEY);
+  $('#loginShell').hidden = false;
+  $('#app').hidden = true;
+  $('#loginErr').textContent = '';
+}
+
+function setView(view) {
+  currentView = view === 'logs' ? 'logs' : 'users';
+  $$('.panel').forEach(panel => panel.classList.remove('active'));
+  $('#panel-' + currentView).classList.add('active');
+  $$('[data-view]').forEach(btn => btn.classList.toggle('active', btn.dataset.view === currentView));
+  if (currentView === 'logs') {
+    $('#pageTitle').textContent = 'Logs';
+    $('#pageSubtitle').textContent = 'Theo dõi lịch sử đăng nhập, vị trí và thiết bị truy cập.';
+    if (!$('#logTable tbody').dataset.loaded) loadLogs(true);
+  } else {
+    $('#pageTitle').textContent = 'Người dùng';
+    $('#pageSubtitle').textContent = 'Quản lý mã đăng nhập, trạng thái và phiên hoạt động.';
+  }
+}
+
+async function trySession() {
+  if (!adminToken) return setLoggedOutUI();
+  try {
+    const r = await api('/api/session');
+    if (r.user && r.user.code === ADMIN_CODE) {
+      setLoggedInUI(adminToken, r.user.code);
+    } else {
+      toast('Tài khoản không có quyền admin', 'err');
+      setLoggedOutUI();
+    }
+  } catch (err) {
+    setLoggedOutUI();
+  }
+}
+
+async function doLogin(event) {
+  if (event) event.preventDefault();
+  $('#loginErr').textContent = '';
+  const code = $('#loginCode').value.trim();
+  if (!code) { $('#loginErr').textContent = 'Nhập mã đăng nhập'; return; }
+  try {
+    const response = await fetch(BASE + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.ok) throw new Error(body.error || ('HTTP ' + response.status));
+    if (!body.user || body.user.code !== ADMIN_CODE) {
+      $('#loginErr').textContent = 'Chỉ tài khoản tổng mới có quyền admin';
+      return;
+    }
+    setLoggedInUI(body.token, body.user.code);
+  } catch (err) {
+    $('#loginErr').textContent = err.message;
+  }
+}
+
+async function logout() {
+  try { await api('/api/session/logout', { method: 'POST' }); } catch (err) {}
+  setLoggedOutUI();
+}
+
+async function loadAll() {
+  await loadUsers();
+  populateLogSelect();
+}
+
+async function loadUsers() {
+  try {
+    const r = await api('/api/admin/users');
+    allUsers = r.users || [];
+    if (!selectedUserCode || !allUsers.some(u => u.code === selectedUserCode)) {
+      selectedUserCode = allUsers.length ? allUsers[0].code : '';
+    }
+    renderUsers();
+    renderUserDetail();
+  } catch (err) {
+    toast('Lỗi tải users: ' + err.message, 'err');
+  }
+}
+
+function renderUsers() {
+  const q = ($('#userSearch').value || '').toLowerCase();
+  const list = allUsers.filter(u => !q || (u.code + ' ' + u.team + ' ' + u.folder + ' ' + (u.shortLabel || '')).toLowerCase().includes(q));
+  const activeCount = allUsers.filter(u => u.isActive).length;
+  $('#userSummary').textContent = allUsers.length + ' user, ' + activeCount + ' đang hoạt động';
+  const tb = $('#userTable tbody');
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="empty">Không có user nào</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(u =>
+    '<tr data-code="' + esc(u.code) + '" class="' + (u.code === selectedUserCode ? 'selected' : '') + '">' +
+    '<td><code>' + esc(u.code) + '</code></td>' +
+    '<td>' + esc(u.team) + '</td>' +
+    '<td><code>' + esc(u.folder) + '</code></td>' +
+    '<td>' + esc(u.shortLabel || '') + '</td>' +
+    '<td><span class="pill ' + (u.isActive ? 'on' : 'off') + '">' + (u.isActive ? 'active' : 'inactive') + '</span></td>' +
+    '<td style="color:var(--muted);font-size:12px">' + esc(u.updatedAtVietnam || u.updatedAt || '') + '</td>' +
+    '<td><div class="row-actions">' +
+      '<button class="btn" data-act="edit" data-code="' + esc(u.code) + '">Sửa</button>' +
+      '<button class="btn" data-act="toggle" data-code="' + esc(u.code) + '" data-active="' + (u.isActive ? '1' : '0') + '">' + (u.isActive ? 'Khóa' : 'Mở') + '</button>' +
+      (u.code === ADMIN_CODE ? '' : '<button class="btn danger" data-act="delete" data-code="' + esc(u.code) + '">Xóa</button>') +
+    '</div></td>' +
+    '</tr>'
+  ).join('');
+}
+
+function getSelectedUser() {
+  return allUsers.find(u => u.code === selectedUserCode) || null;
+}
+
+function selectUser(code) {
+  selectedUserCode = code;
+  renderUsers();
+  renderUserDetail();
+}
+
+function renderUserDetail() {
+  const body = $('#userDetailBody');
+  const user = getSelectedUser();
+  if (!user) {
+    body.innerHTML = '<div class="empty">Chọn một user để xem chi tiết và session.</div>';
+    return;
+  }
+  body.innerHTML =
+    '<div class="detail-title">' +
+      '<div><h3>' + esc(user.team || user.code) + '</h3><p class="notes"><code>' + esc(user.code) + '</code></p></div>' +
+      '<span class="pill ' + (user.isActive ? 'on' : 'off') + '">' + (user.isActive ? 'active' : 'inactive') + '</span>' +
+    '</div>' +
+    '<div class="meta-grid">' +
+      '<div class="meta-item"><span>Folder</span><strong>' + esc(user.folder) + '</strong></div>' +
+      '<div class="meta-item"><span>Short label</span><strong>' + esc(user.shortLabel || '') + '</strong></div>' +
+      '<div class="meta-item"><span>Subtitle</span><strong>' + esc(user.subtitle || '') + '</strong></div>' +
+      '<div class="meta-item"><span>Cập nhật</span><strong>' + esc(user.updatedAtVietnam || user.updatedAt || '') + '</strong></div>' +
+    '</div>' +
+    '<div class="notes">' + (user.notes ? esc(user.notes) : 'Không có ghi chú.') + '</div>' +
+    '<div class="row-actions">' +
+      '<button id="detailEdit" class="btn primary" type="button">Sửa user</button>' +
+      '<button id="detailToggle" class="btn" type="button">' + (user.isActive ? 'Khóa user' : 'Mở user') + '</button>' +
+      '<button id="detailKillSessions" class="btn danger" type="button">Hủy sessions</button>' +
+      (user.code === ADMIN_CODE ? '' : '<button id="detailDelete" class="btn danger" type="button">Xóa user</button>') +
+    '</div>' +
+    '<section class="session-block session-table">' +
+      '<div class="session-head"><div><h2>Sessions</h2><p id="sessionSummary">Đang tải...</p></div><button id="sessionReload" class="btn" type="button">Tải lại</button></div>' +
+      '<div class="table-wrap"><table id="userSessionTable"><thead><tr><th>Token</th><th>IP</th><th>User-Agent</th><th>Tạo</th><th>Hết hạn</th><th>Lần cuối</th></tr></thead><tbody></tbody></table></div>' +
+    '</section>';
+
+  $('#detailEdit').addEventListener('click', () => openModal(user));
+  $('#detailToggle').addEventListener('click', () => toggleUser(user.code, user.isActive));
+  $('#detailKillSessions').addEventListener('click', () => killSessions(user.code));
+  const deleteBtn = $('#detailDelete');
+  if (deleteBtn) deleteBtn.addEventListener('click', () => deleteUser(user.code));
+  $('#sessionReload').addEventListener('click', () => loadUserSessions(user.code));
+  loadUserSessions(user.code);
+}
+
+async function loadUserSessions(code) {
+  const table = $('#userSessionTable tbody');
+  if (!table || !code) return;
+  table.innerHTML = '<tr><td colspan="6" class="empty">Đang tải sessions...</td></tr>';
+  try {
+    const r = await api('/api/admin/sessions?code=' + encodeURIComponent(code));
+    const sessions = r.sessions || [];
+    $('#sessionSummary').textContent = sessions.length + ' session gần nhất';
+    if (!sessions.length) {
+      table.innerHTML = '<tr><td colspan="6" class="empty">User này chưa có session.</td></tr>';
+      return;
+    }
+    table.innerHTML = sessions.map(s =>
+      '<tr>' +
+      '<td><code>' + esc(s.token) + '</code></td>' +
+      '<td>' + esc(s.ip) + '</td>' +
+      '<td style="max-width:260px;word-break:break-all;color:var(--muted)">' + esc(s.userAgent) + '</td>' +
+      '<td>' + esc(s.createdAtVietnam || s.createdAt) + '</td>' +
+      '<td>' + esc(s.expiresAtVietnam || s.expiresAt) + '</td>' +
+      '<td>' + esc(s.lastSeenAtVietnam || s.lastSeenAt) + '</td>' +
+      '</tr>'
+    ).join('');
+  } catch (err) {
+    table.innerHTML = '<tr><td colspan="6" class="empty">Lỗi tải sessions: ' + esc(err.message) + '</td></tr>';
+  }
+}
+
+function populateLogSelect() {
+  const select = $('#logSelect');
+  select.innerHTML = '<option value="">Tất cả người dùng</option>' +
+    allUsers.map(u => '<option value="' + esc(u.code) + '">' + esc(u.code) + ' - ' + esc(u.team) + '</option>').join('');
+}
+
+async function loadLogs(resetPage) {
+  if (resetPage) logPage = 1;
+  const account = $('#logSelect').value || '';
+  const pageSize = Math.min(500, Math.max(1, parseInt($('#logLimit').value, 10) || 100));
+  const query = '?page=' + logPage + '&pageSize=' + pageSize + (account ? '&account=' + encodeURIComponent(account) : '');
+  try {
+    const r = await api('/api/login-log/recent' + query);
+    const rows = r.rows || [];
+    currentLogIds = rows.map(row => row.id).filter(Boolean);
+    logTotalPages = Math.max(1, Number(r.totalPages || 1));
+    logPage = Math.min(Math.max(1, Number(r.page || logPage)), logTotalPages);
+    $('#logSummary').textContent = 'Tổng ' + (r.total || 0) + ' dòng. Thời gian hiển thị theo giờ Việt Nam (GMT+7).';
+    $('#logPageInfo').textContent = 'Trang ' + logPage + ' / ' + logTotalPages;
+    $('#logPrev').disabled = logPage <= 1;
+    $('#logNext').disabled = logPage >= logTotalPages;
+    $('#logClearPage').disabled = !currentLogIds.length;
+    $('#logTable tbody').dataset.loaded = '1';
+    if (!rows.length) {
+      $('#logTable tbody').innerHTML = '<tr><td colspan="12" class="empty">Chưa có log nào.</td></tr>';
+      return;
+    }
+    $('#logTable tbody').innerHTML = rows.map(row =>
+      '<tr>' +
+      '<td>' + esc(row.id) + '</td>' +
+      '<td>' + esc(row.timeVietnam || row.time) + '</td>' +
+      '<td><code>' + esc(row.account) + '</code></td>' +
+      '<td>' + esc(row.team || '') + '</td>' +
+      '<td>' + esc(row.display_name || '') + '</td>' +
+      '<td>' + esc(row.ip) + '</td>' +
+      '<td>' + esc(row.browser) + '</td>' +
+      '<td>' + esc(row.platform) + '</td>' +
+      '<td>' + esc(row.language) + '</td>' +
+      '<td>' + (row.latitude != null && row.longitude != null ? esc(Number(row.latitude).toFixed(5)) + ', ' + esc(Number(row.longitude).toFixed(5)) : '') + '</td>' +
+      '<td>' + (row.accuracy != null ? esc(Math.round(Number(row.accuracy))) + ' m' : '') + '</td>' +
+      '<td><span class="pill ' + (row.location_status === 'available' ? 'on' : 'off') + '">' + esc(row.location_status || '') + '</span></td>' +
+      '</tr>'
+    ).join('');
+  } catch (err) {
+    toast('Lỗi tải logs: ' + err.message, 'err');
+  }
+}
+
+async function clearCurrentLogs() {
+  if (!currentLogIds.length) { toast('Không có log nào để xóa', 'err'); return; }
+  if (!confirm('Xóa ' + currentLogIds.length + ' dòng log đang hiển thị?')) return;
+  try {
+    const r = await api('/api/admin/login-logs/clear', { method: 'POST', body: JSON.stringify({ ids: currentLogIds }) });
+    toast('Đã xóa ' + r.deleted + ' dòng log', 'ok');
+    loadLogs(false);
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+function openModal(user) {
+  $('#modalTitle').textContent = user ? 'Sửa user: ' + user.code : 'Thêm user mới';
+  const f = $('#userForm');
+  f.reset();
+  f.elements.code.disabled = !!(user && user.code === ADMIN_CODE);
+  if (user) {
+    f.elements.code.value = user.code || '';
+    f.elements.team.value = user.team || '';
+    f.elements.folder.value = user.folder || '';
+    f.elements.shortLabel.value = user.shortLabel || '';
+    f.elements.subtitle.value = user.subtitle || '';
+    f.elements.notes.value = user.notes || '';
+    f.elements.isActive.checked = !!user.isActive;
+  }
+  f.dataset.editing = user ? user.code : '';
+  $('#modal').classList.add('open');
+}
+
+function closeModal() {
+  $('#modal').classList.remove('open');
+  $('#userForm').dataset.editing = '';
+}
+
+async function saveUser(event) {
+  event.preventDefault();
+  const f = event.target;
+  const editing = f.dataset.editing;
+  const data = {
+    code: f.elements.code.value.trim().toLowerCase(),
+    team: f.elements.team.value.trim(),
+    folder: f.elements.folder.value.trim(),
+    shortLabel: f.elements.shortLabel.value.trim(),
+    subtitle: f.elements.subtitle.value.trim(),
+    notes: f.elements.notes.value.trim(),
+    isActive: f.elements.isActive.checked
+  };
+  try {
+    if (editing) {
+      await api('/api/users?code=' + encodeURIComponent(editing), { method: 'PUT', body: JSON.stringify(data) });
+      selectedUserCode = editing;
+      toast('Đã cập nhật ' + editing, 'ok');
+    } else {
+      const r = await api('/api/users', { method: 'POST', body: JSON.stringify(data) });
+      selectedUserCode = r.user ? r.user.code : data.code;
+      toast('Đã thêm ' + data.code, 'ok');
+    }
+    closeModal();
+    await loadUsers();
+    populateLogSelect();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function deleteUser(code) {
+  if (code === ADMIN_CODE) { toast('Không thể xóa tài khoản tổng', 'err'); return; }
+  if (!confirm('Xóa user ' + code + ' và toàn bộ session của user này?')) return;
+  try {
+    await api('/api/users?code=' + encodeURIComponent(code), { method: 'DELETE' });
+    toast('Đã xóa ' + code, 'ok');
+    if (selectedUserCode === code) selectedUserCode = '';
+    await loadUsers();
+    populateLogSelect();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function toggleUser(code, currentlyActive) {
+  try {
+    await api('/api/users?code=' + encodeURIComponent(code), {
+      method: 'PUT',
+      body: JSON.stringify({ isActive: !currentlyActive })
+    });
+    toast('Đã cập nhật trạng thái ' + code, 'ok');
+    await loadUsers();
+    populateLogSelect();
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+async function killSessions(code) {
+  if (!code) return;
+  if (!confirm('Hủy tất cả session đang hoạt động của ' + code + '?')) return;
+  try {
+    const r = await api('/api/admin/sessions/kill', { method: 'POST', body: JSON.stringify({ code }) });
+    toast('Đã hủy ' + r.deleted + ' session của ' + code, 'ok');
+    loadUserSessions(code);
+  } catch (err) {
+    toast('Lỗi: ' + err.message, 'err');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('#loginCard').addEventListener('submit', doLogin);
+  $('#sidebarLogout').addEventListener('click', logout);
+  $$('[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.id === 'sidebarLogout') return;
+      setView(btn.dataset.view);
+    });
+  });
+  $('#userSearch').addEventListener('input', renderUsers);
+  $('#userReload').addEventListener('click', loadUsers);
+  $('#userAdd').addEventListener('click', () => openModal(null));
+  $('#userTable').addEventListener('click', event => {
+    const btn = event.target.closest('button');
+    if (btn) {
+      const code = btn.dataset.code;
+      if (btn.dataset.act === 'edit') {
+        const user = allUsers.find(u => u.code === code);
+        if (user) openModal(user);
+      } else if (btn.dataset.act === 'toggle') {
+        toggleUser(code, btn.dataset.active === '1');
+      } else if (btn.dataset.act === 'delete') {
+        deleteUser(code);
+      }
+      return;
+    }
+    const row = event.target.closest('tr[data-code]');
+    if (row) selectUser(row.dataset.code);
+  });
+  $('#logSelect').addEventListener('change', () => loadLogs(true));
+  $('#logLimit').addEventListener('change', () => loadLogs(true));
+  $('#logReload').addEventListener('click', () => loadLogs(false));
+  $('#logPrev').addEventListener('click', () => { if (logPage > 1) { logPage--; loadLogs(false); } });
+  $('#logNext').addEventListener('click', () => { if (logPage < logTotalPages) { logPage++; loadLogs(false); } });
+  $('#logClearPage').addEventListener('click', clearCurrentLogs);
+  $$('[data-close]').forEach(btn => btn.addEventListener('click', closeModal));
+  $('#modal').addEventListener('click', event => { if (event.target.id === 'modal') closeModal(); });
+  $('#userForm').addEventListener('submit', saveUser);
+  trySession();
+});
+</script>
+</body>
+</html>`;
+}
+
 function renderAdminPage() {
   return `<!doctype html>
 <html lang="vi">
@@ -904,7 +1788,7 @@ async function fetchLogsPage(env, options) {
   const total = countRow ? Number(countRow.total) : 0;
 
   const rowsResult = await env.DB.prepare(
-    'SELECT id, time, account, display_name, ip, browser, platform, language, latitude, longitude, accuracy, location_status ' +
+    'SELECT id, time, account, display_name, team, ip, browser, platform, language, latitude, longitude, accuracy, location_status ' +
     'FROM login_logs' + whereSql +
     ' ORDER BY id DESC LIMIT ? OFFSET ?'
   ).bind(...params, pageSize, offset).all();
@@ -1129,21 +2013,10 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // Trang xem log HTML (mở root hoặc /logs là có bảng)
-    if (url.pathname === '/' || url.pathname === '/logs') {
+    // Một dashboard duy nhất cho quản trị user và logs.
+    if (url.pathname === '/' || url.pathname === '/logs' || url.pathname === '/admin') {
       if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
-      const data = await fetchLogsPage(env, {
-        page: parsePage(url.searchParams.get('page')),
-        pageSize: parsePageSize(url.searchParams.get('pageSize')),
-        account: cleanText(url.searchParams.get('account'), 80) || null
-      });
-      return html(renderLogsTable(data, { account: url.searchParams.get('account') || '' }));
-    }
-
-    // Trang admin SPA
-    if (url.pathname === '/admin') {
-      if (request.method !== 'GET') return json({ ok: false, error: 'Method not allowed' }, 405);
-      return html(renderAdminPage());
+      return html(renderDashboardPage());
     }
 
     if (url.pathname === '/api/login-log') {

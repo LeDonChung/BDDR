@@ -37,6 +37,7 @@ let currentAuthUser = null;
 let currentDataProfile = null;
 let appStarted = false;
 let permissionModalAction = null;
+let sharedLocationHandled = false;
 const areaMeasureState = {
   active: false,
   closed: false,
@@ -458,6 +459,7 @@ async function startAppForUser(sessionResult) {
   if (!sessionResult || !sessionResult.profile || !sessionResult.user) {
     throw new Error('Phiên đăng nhập không hợp lệ');
   }
+  const sharedLocation = getSharedLocationFromUrl();
   const profile = userToProfile(sessionResult.user) || sessionResult.profile;
   if (!profile) {
     throw new Error('Mã đăng nhập chưa có cấu hình dữ liệu');
@@ -474,12 +476,16 @@ async function startAppForUser(sessionResult) {
   hideLoginScreen();
   startSessionKeepalive();
 
-  if (appStarted) return;
+  if (appStarted) {
+    if (sharedLocation && !sharedLocationHandled) openSharedLocation(sharedLocation);
+    return;
+  }
   appStarted = true;
   initMap();
   bindLocateButton();
   startCompassOnAppOpen();
-  const shouldPanToLocation = !loadAppState();
+  if (sharedLocation) openSharedLocation(sharedLocation);
+  const shouldPanToLocation = !sharedLocation && !loadAppState();
   // Lưu log lần đầu ngay khi đăng nhập thành công (không phụ thuộc GPS / quyền vị trí)
   // Lần 2 (có GPS) sẽ được locateUser tự ghi khi user vừa cấp quyền vị trí
   writeLoginAccessLog(null);
@@ -3097,6 +3103,115 @@ function findRenderedFeatureAt(latlng) {
   return best;
 }
 
+function isValidSharedLatLng(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90 && lat <= 90 &&
+    lng >= -180 && lng <= 180;
+}
+
+function normalizeShareZoom(value) {
+  const zoom = Number(value);
+  if (!Number.isFinite(zoom)) return 18;
+  return Math.max(2, Math.min(21, zoom));
+}
+
+function getSharedLocationFromUrl() {
+  const params = new URLSearchParams(window.location.search || '');
+  let lat = Number(params.get('lat'));
+  let lng = Number(params.get('lng'));
+  let zoom = params.get('z') || params.get('zoom');
+
+  const compact = params.get('s');
+  if ((!Number.isFinite(lat) || !Number.isFinite(lng)) && compact) {
+    const parts = compact.split(',').map(part => part.trim());
+    lat = Number(parts[0]);
+    lng = Number(parts[1]);
+    zoom = parts[2] || zoom;
+  }
+
+  const hasShareParams = params.get('share') === '1' ||
+    params.has('lat') ||
+    params.has('lng') ||
+    !!compact;
+  if (!hasShareParams || !isValidSharedLatLng(lat, lng)) return null;
+
+  const label = String(params.get('label') || '').trim().slice(0, 120);
+  const desc = String(params.get('desc') || '').trim().slice(0, 180);
+  return {
+    lat,
+    lng,
+    zoom: normalizeShareZoom(zoom),
+    label,
+    desc
+  };
+}
+
+function createShareUrl(destination) {
+  const latlng = normalizeDestinationLatLng(destination.latlng);
+  const lat = Number(latlng[0]);
+  const lng = Number(latlng[1]);
+  if (!isValidSharedLatLng(lat, lng)) return '';
+
+  const url = new URL(window.location.href);
+  url.hash = '';
+  url.searchParams.delete('s');
+  url.searchParams.set('share', '1');
+  url.searchParams.set('lat', lat.toFixed(6));
+  url.searchParams.set('lng', lng.toFixed(6));
+  url.searchParams.set('z', String(map ? Number(map.getZoom()).toFixed(2).replace(/\.00$/, '') : 18));
+
+  const label = String(destination.name || '').trim();
+  const desc = String(destination.desc || '').trim();
+  if (label && label !== 'Điểm đã chọn') url.searchParams.set('label', label.slice(0, 120));
+  else url.searchParams.delete('label');
+  if (desc && desc !== formatLatLng({ lat, lng })) url.searchParams.set('desc', desc.slice(0, 180));
+  else url.searchParams.delete('desc');
+  return url.toString();
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!ok) throw new Error('Không thể copy link');
+}
+
+async function shareLocation(destination) {
+  const url = createShareUrl(destination);
+  if (!url) {
+    showToast('Không thể tạo link địa điểm');
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(url);
+    showToast('Đã sao chép link địa điểm', 2600);
+  } catch (err) {
+    showToast(err.message || 'Không thể sao chép link địa điểm', 3200);
+  }
+}
+
+function openSharedLocation(shared) {
+  if (!map || !shared) return;
+  sharedLocationHandled = true;
+  const latlng = L.latLng(shared.lat, shared.lng);
+
+  map.setView(latlng, shared.zoom || 18, { animate: true });
+  showSelectedLandmark(latlng);
+  showToast('Đã mở địa điểm được chia sẻ', 2600);
+}
+
 function showRouteChoicePopup(destination) {
   pendingRouteDestination = destination;
   if (typeof closeRoutePanel === 'function') closeRoutePanel();
@@ -3106,7 +3221,8 @@ function showRouteChoicePopup(destination) {
   const coordsEl = $('routeChoiceCoords');
   const directBtn = $('routeChoiceDirectBtn');
   const googleBtn = $('routeChoiceGoogleBtn');
-  if (!modal || !titleEl || !coordsEl || !directBtn || !googleBtn) return;
+  const shareBtn = $('routeChoiceShareBtn');
+  if (!modal || !titleEl || !coordsEl || !directBtn || !googleBtn || !shareBtn) return;
 
   const latlng = normalizeDestinationLatLng(destination.latlng);
   const title = destination.name || 'Điểm đã chọn';
@@ -3127,6 +3243,13 @@ function showRouteChoicePopup(destination) {
     close();
     if (typeof openGoogleMapsRoute === 'function') openGoogleMapsRoute(latlng, title);
   };
+  const onShare = () => {
+    shareLocation({
+      latlng,
+      name: title,
+      desc: destination.desc || ''
+    });
+  };
 
   // Re-bind handlers each time so they use the latest latlng/title.
   modal.querySelectorAll('[data-route-choice-close]').forEach(el => {
@@ -3134,6 +3257,7 @@ function showRouteChoicePopup(destination) {
   });
   directBtn.onclick = onDirect;
   googleBtn.onclick = onGoogle;
+  shareBtn.onclick = onShare;
 
   if (!routeChoiceEscapeBound) {
     routeChoiceEscapeBound = true;

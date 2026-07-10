@@ -152,10 +152,14 @@
             <p id="routeChoiceCoords" class="modal__coords"></p>
             <div class="route-choice__actions">
                 <button type="button" class="btn btn--primary" id="routeChoiceDirectBtn">
-                    Chỉ đường trực tiếp
+                    Chỉ đường
                 </button>
                 <button type="button" class="btn btn--ghost" id="routeChoiceGoogleBtn">
                     Google Maps
+                </button>
+                <button type="button" class="btn btn--ghost route-choice__share" id="routeChoiceShareBtn" title="Sao chép link địa điểm">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/></svg>
+                    Sao chép link
                 </button>
             </div>
         </section>
@@ -403,7 +407,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
     <script src="https://unpkg.com/protomaps-leaflet@5.0.0/dist/protomaps-leaflet.js"></script>
-    <script src="script.js?v=20260710-area"></script>
+    <script src="script.js?v=20260710-share"></script>
     <script src="routing.js"></script>
 </body>
 </html>
