@@ -39,6 +39,8 @@ let appStarted = false;
 let permissionModalAction = null;
 let sharedLocationHandled = false;
 let isPublicShareMode = false;
+let baseLayerMenuOutsideHandler = null;
+let baseLayerMenuKeyHandler = null;
 const areaMeasureState = {
   active: false,
   closed: false,
@@ -2425,8 +2427,8 @@ function getLayerDisplayName(layer) {
 function updateBaseLayerToggleTitle() {
   const btn = document.querySelector('.leaflet-control-layers-toggle');
   if (!btn) return;
-  const nextName = currentBaseLayer === satelliteLayer ? 'V\u1EC7 tinh' : '\u0110\u01B0\u1EDDng ph\u1ED1';
-  btn.title = '\u0110\u1ED5i sang ' + nextName;
+  const currentName = getLayerDisplayName(currentBaseLayer);
+  btn.title = '\u0110\u1ED5i n\u1EC1n b\u1EA3n \u0111\u1ED3. Hi\u1EC7n t\u1EA1i: ' + currentName;
   btn.setAttribute('aria-label', btn.title);
 }
 
@@ -2448,7 +2450,9 @@ function showBaseLayerMenu() {
     item.className = 'baseLayerMenu-item' + (layer === currentBaseLayer ? ' baseLayerMenu-item--active' : '');
     item.textContent = getLayerDisplayName(layer);
     item.addEventListener('click', (e) => {
+      e.preventDefault();
       e.stopPropagation();
+      if (typeof L !== 'undefined' && L.DomEvent) L.DomEvent.stop(e);
       if (layer !== currentBaseLayer) setBaseLayer(layer);
       closeBaseLayerMenu();
     });
@@ -2456,15 +2460,30 @@ function showBaseLayerMenu() {
   });
 
   btn.parentElement.appendChild(menu);
+  baseLayerMenuOutsideHandler = (event) => {
+    if (menu.contains(event.target) || btn.contains(event.target)) return;
+    closeBaseLayerMenu();
+  };
+  baseLayerMenuKeyHandler = (event) => {
+    if (event.key === 'Escape') closeBaseLayerMenu();
+  };
   setTimeout(() => {
-    document.addEventListener('click', closeBaseLayerMenu, { once: true });
+    document.addEventListener('click', baseLayerMenuOutsideHandler);
+    document.addEventListener('keydown', baseLayerMenuKeyHandler);
   }, 0);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeBaseLayerMenu(); });
 }
 
 function closeBaseLayerMenu() {
   const menu = document.getElementById('baseLayerMenu');
   if (menu) menu.remove();
+  if (baseLayerMenuOutsideHandler) {
+    document.removeEventListener('click', baseLayerMenuOutsideHandler);
+    baseLayerMenuOutsideHandler = null;
+  }
+  if (baseLayerMenuKeyHandler) {
+    document.removeEventListener('keydown', baseLayerMenuKeyHandler);
+    baseLayerMenuKeyHandler = null;
+  }
 }
 
 function addBaseLayerToggleControl() {
