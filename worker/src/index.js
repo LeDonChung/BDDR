@@ -10,6 +10,10 @@ const PAGE_SIZE_MAX = 500;
 const SESSION_TTL_MS = 60 * 60 * 1000;          // 60 phút
 const SESSION_REFRESH_WINDOW_MS = 10 * 60 * 1000; // nếu còn < 10 phút thì gia hạn
 const SESSION_TOKEN_BYTES = 32;
+const VIETNAM_TIME_ZONE = 'Asia/Ho_Chi_Minh';
+const VIETNAM_TIME_SUFFIX = 'GMT+7';
+const VIETNAM_TIME_OFFSET_MS = 7 * 60 * 60 * 1000;
+let vietnamTimeFormatter = null;
 
 function json(body, status = 200, extraHeaders) {
   return new Response(JSON.stringify(body), {
@@ -93,6 +97,54 @@ function parseIsoUtc(value) {
   if (!/Z$|[+-]\d{2}:?\d{2}$/.test(s)) s = s + 'Z';
   const t = Date.parse(s);
   return Number.isFinite(t) ? t : null;
+}
+
+function getVietnamTimeFormatter() {
+  if (!vietnamTimeFormatter) {
+    vietnamTimeFormatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: VIETNAM_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      hourCycle: 'h23'
+    });
+  }
+  return vietnamTimeFormatter;
+}
+
+function padTimePart(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatVietnamTimeFallback(ms) {
+  const d = new Date(ms + VIETNAM_TIME_OFFSET_MS);
+  return padTimePart(d.getUTCDate()) + '/' +
+    padTimePart(d.getUTCMonth() + 1) + '/' +
+    d.getUTCFullYear() + ' ' +
+    padTimePart(d.getUTCHours()) + ':' +
+    padTimePart(d.getUTCMinutes()) + ':' +
+    padTimePart(d.getUTCSeconds()) + ' ' +
+    VIETNAM_TIME_SUFFIX;
+}
+
+function formatVietnamTime(value) {
+  const ms = parseIsoUtc(value);
+  if (ms == null) return value || '';
+  try {
+    const parts = {};
+    for (const part of getVietnamTimeFormatter().formatToParts(new Date(ms))) {
+      if (part.type !== 'literal') parts[part.type] = part.value;
+    }
+    return parts.day + '/' + parts.month + '/' + parts.year + ' ' +
+      parts.hour + ':' + parts.minute + ':' + parts.second + ' ' +
+      VIETNAM_TIME_SUFFIX;
+  } catch (err) {
+    return formatVietnamTimeFallback(ms);
+  }
 }
 
 async function findUserByCode(env, code) {
@@ -183,7 +235,10 @@ async function listSessions(env, code) {
     userAgent: r.user_agent || '',
     createdAt: r.created_at,
     expiresAt: r.expires_at,
-    lastSeenAt: r.last_seen_at || ''
+    lastSeenAt: r.last_seen_at || '',
+    createdAtVietnam: formatVietnamTime(r.created_at),
+    expiresAtVietnam: formatVietnamTime(r.expires_at),
+    lastSeenAtVietnam: formatVietnamTime(r.last_seen_at || '')
   }));
 }
 
@@ -323,7 +378,7 @@ function renderAdminPage() {
       </div>
       <table id="userTable">
         <thead><tr>
-          <th>Mã</th><th>Tên đội</th><th>Folder</th><th>Short label</th><th>Trạng thái</th><th>Cập nhật</th><th></th>
+          <th>Mã</th><th>Tên đội</th><th>Folder</th><th>Short label</th><th>Trạng thái</th><th>Cập nhật (VN)</th><th></th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -340,7 +395,7 @@ function renderAdminPage() {
       </div>
       <table id="sessTable">
         <thead><tr>
-          <th>Token</th><th>IP</th><th>User-Agent</th><th>Tạo</th><th>Hết hạn</th><th>Lần cuối</th>
+          <th>Token</th><th>IP</th><th>User-Agent</th><th>Tạo (VN)</th><th>Hết hạn (VN)</th><th>Lần cuối (VN)</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -360,7 +415,7 @@ function renderAdminPage() {
       </div>
       <table id="logTable">
         <thead><tr>
-          <th>#</th><th>Thời gian</th><th>IP</th><th>Trình duyệt</th><th>HĐH</th><th>Ngôn ngữ</th><th>Tọa độ</th><th>Trạng thái</th>
+          <th>#</th><th>Thời gian (VN)</th><th>IP</th><th>Trình duyệt</th><th>HĐH</th><th>Ngôn ngữ</th><th>Tọa độ</th><th>Trạng thái</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -508,7 +563,7 @@ function renderUsers() {
     '<td><code>' + esc(u.folder) + '</code></td>' +
     '<td>' + esc(u.shortLabel || '') + '</td>' +
     '<td><span class="pill ' + (u.isActive ? 'on' : 'off') + '">' + (u.isActive ? 'active' : 'inactive') + '</span></td>' +
-    '<td style="font-size:.8rem;color:var(--muted)">' + esc(u.updatedAt || '') + '</td>' +
+    '<td style="font-size:.8rem;color:var(--muted)">' + esc(u.updatedAtVietnam || u.updatedAt || '') + '</td>' +
     '<td><div class="row-actions">' +
       '<button data-act="edit" data-code="' + esc(u.code) + '">Sửa</button>' +
       '<button data-act="toggle" data-code="' + esc(u.code) + '" data-active="' + (u.isActive ? '1' : '0') + '">' + (u.isActive ? 'Khoá' : 'Mở') + '</button>' +
@@ -615,9 +670,9 @@ async function loadSessions() {
       '<td><code style="font-size:.75rem">' + esc(s.token) + '</code></td>' +
       '<td>' + esc(s.ip) + '</td>' +
       '<td style="max-width:300px;word-break:break-all;font-size:.8rem">' + esc(s.userAgent) + '</td>' +
-      '<td style="font-size:.8rem">' + esc(s.createdAt) + '</td>' +
-      '<td style="font-size:.8rem">' + esc(s.expiresAt) + '</td>' +
-      '<td style="font-size:.8rem">' + esc(s.lastSeenAt) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(s.createdAtVietnam || s.createdAt) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(s.expiresAtVietnam || s.expiresAt) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(s.lastSeenAtVietnam || s.lastSeenAt) + '</td>' +
       '</tr>'
     ).join('');
   } catch (err) {
@@ -664,7 +719,7 @@ async function loadLogs() {
     $('#logTable tbody').innerHTML = list.map(row =>
       '<tr>' +
       '<td>' + esc(row.id) + '</td>' +
-      '<td style="font-size:.8rem">' + esc(row.time) + '</td>' +
+      '<td style="font-size:.8rem">' + esc(row.timeVietnam || row.time) + '</td>' +
       '<td>' + esc(row.ip) + '</td>' +
       '<td style="font-size:.8rem">' + esc(row.browser) + '</td>' +
       '<td style="font-size:.8rem">' + esc(row.platform) + '</td>' +
@@ -794,7 +849,8 @@ function rowToUser(row) {
     subtitle: row.subtitle || '',
     isActive: Number(row.is_active) === 1,
     notes: row.notes || '',
-    updatedAt: row.updated_at || ''
+    updatedAt: row.updated_at || '',
+    updatedAtVietnam: formatVietnamTime(row.updated_at || '')
   };
 }
 
@@ -858,7 +914,9 @@ async function fetchLogsPage(env, options) {
     pageSize,
     total,
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
-    rows: (rowsResult && rowsResult.results) || []
+    rows: ((rowsResult && rowsResult.results) || []).map(row => Object.assign({}, row, {
+      timeVietnam: formatVietnamTime(row.time)
+    }))
   };
 }
 
@@ -885,7 +943,7 @@ function renderLogsTable(data, options) {
   const head = `
     <tr>
       <th>#</th>
-      <th>Thời gian (UTC)</th>
+      <th>Thời gian (Việt Nam)</th>
       <th>Mã</th>
       <th>Đơn vị</th>
       <th>Tên hiển thị</th>
@@ -905,7 +963,7 @@ function renderLogsTable(data, options) {
     for (const r of rows) {
       body += '<tr>' +
         '<td>' + escapeHtml(r.id) + '</td>' +
-        '<td>' + escapeHtml(r.time) + '</td>' +
+        '<td>' + escapeHtml(r.timeVietnam || r.time) + '</td>' +
         '<td>' + escapeHtml(r.account) + '</td>' +
         '<td>' + escapeHtml(r.team || '') + '</td>' +
         '<td>' + escapeHtml(r.display_name) + '</td>' +
@@ -983,7 +1041,7 @@ function renderLogsTable(data, options) {
 </head>
 <body>
   <h1>BDDR Tong – Log đăng nhập</h1>
-  <div class="sub">Dữ liệu trong bảng <code>login_logs</code> của Cloudflare D1.</div>
+  <div class="sub">Dữ liệu trong bảng <code>login_logs</code> của Cloudflare D1. Thời gian hiển thị theo giờ Việt Nam (GMT+7).</div>
   ${filterBlock}
   ${nav}
   <table>
@@ -991,7 +1049,7 @@ function renderLogsTable(data, options) {
     <tbody>${body}</tbody>
   </table>
   <footer>
-    API: <code>GET /api/login-log/recent</code> (JSON) · <code>POST /api/login-log</code> (ghi log) · Cập nhật lúc ${escapeHtml(new Date().toISOString())}
+    API: <code>GET /api/login-log/recent</code> (JSON) · <code>POST /api/login-log</code> (ghi log) · Cập nhật lúc ${escapeHtml(formatVietnamTime(new Date().toISOString()))}
   </footer>
   <script>
     const CURRENT_PAGE_LOG_IDS = ${JSON.stringify(currentPageIds)};
