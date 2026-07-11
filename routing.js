@@ -8,6 +8,7 @@ let routeMarkerLayer = null;
 let routeSvgRenderer = null;
 let currentDestinationLabel = '';
 let activeRoute = null;
+let routeClearGeneration = 0;
 let navigationWatchId = null;
 let isNavigating = false;
 let followUser = true;
@@ -180,20 +181,20 @@ function initRouting() {
   if (startBtn) startBtn.addEventListener('click', startNavigation);
 
   const stopBtn = stopNavBtn();
-  if (stopBtn) stopBtn.addEventListener('click', () => stopNavigation(false));
+  if (stopBtn) stopBtn.addEventListener('click', exitNavigation);
 
   const recenterBtn = recenterNavBtn();
   if (recenterBtn) recenterBtn.addEventListener('click', recenterNavigation);
 
   const driveStopBtn = navDriveStopBtn();
-  if (driveStopBtn) driveStopBtn.addEventListener('click', () => stopNavigation(false));
+  if (driveStopBtn) driveStopBtn.addEventListener('click', exitNavigation);
 
   const driveCloseBtn = navDriveCloseBtn();
   if (driveCloseBtn) {
     driveCloseBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      stopNavigation(false);
+      exitNavigation();
     }, true);
   }
 
@@ -275,9 +276,11 @@ async function findRoute() {
   if (!options.silent) btn.disabled = true;
   const original = btn.innerHTML;
   if (!options.silent) btn.innerHTML = 'Đang tìm đường…';
+  const clearGeneration = routeClearGeneration;
 
   try {
     const route = await requestRoute(startPoint, endPoint);
+    if (clearGeneration !== routeClearGeneration) return null;
     if (route) {
       displayRoute(route, { fit: !options.keepView, silent: options.silent });
       return route;
@@ -286,6 +289,7 @@ async function findRoute() {
       showToast('Không tìm thấy đường theo dữ liệu đường bộ, đang vẽ tuyến tham khảo');
     }
   } catch (err) {
+    if (clearGeneration !== routeClearGeneration) return null;
     console.error(err);
     showFallbackRoute();
     showToast('Lỗi máy chủ định tuyến, đang vẽ tuyến tham khảo');
@@ -562,7 +566,13 @@ function clearRouteLayers() {
   }
 }
 
+function exitNavigation() {
+  clearRoute();
+}
+
 function clearRoute() {
+  routeClearGeneration++;
+  pendingDirectRoute = false;
   stopNavigation(false);
   clearRouteLayers();
   stopRouteAlongLoop();
@@ -572,6 +582,7 @@ function clearRoute() {
   const endInp = endAddressInput();
   if (endInp) endInp.value = '';
   routeDetails().hidden = true;
+  updateNavigationButtons();
   updateRouteBtnState();
 }
 

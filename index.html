@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b1220">
     <title>Bản đồ công ty 75</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-    <link rel="stylesheet" href="style.css?v=20260710-gmaps-link">
+    <link rel="stylesheet" href="style.css?v=20260711-coordinate-area-only">
 </head>
 <body>
     <section id="loginScreen" class="login-screen" aria-hidden="false">
@@ -62,6 +62,9 @@
             <button id="areaMeasureBtn" class="icon-btn" title="Đo diện tích" aria-label="Chế độ đo diện tích" aria-pressed="false">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7 11 3l8 5-2 11H7L4 7Z"/><circle cx="4" cy="7" r="1.6"/><circle cx="11" cy="3" r="1.6"/><circle cx="19" cy="8" r="1.6"/><circle cx="17" cy="19" r="1.6"/><circle cx="7" cy="19" r="1.6"/></svg>
             </button>
+            <button id="coordinateDrawBtn" class="icon-btn" title="Vẽ từ tọa độ" aria-label="Chế độ vẽ từ tọa độ" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 9 9l5 4 6-8"/><circle cx="4" cy="18" r="2"/><circle cx="9" cy="9" r="2"/><circle cx="14" cy="13" r="2"/><circle cx="20" cy="5" r="2"/></svg>
+            </button>
             <button id="helpBtn" class="icon-btn" title="Xem hướng dẫn" aria-label="Xem hướng dẫn sử dụng">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
             </button>
@@ -80,6 +83,27 @@
                     <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
                 </button>
             </div>
+        </div>
+        <div id="coordinateDrawPanel" class="coordinate-draw-panel" hidden>
+            <div class="coordinate-draw-panel__head">
+                <div class="coordinate-draw-panel__main">
+                    <span id="coordinateDrawCount">0 điểm</span>
+                    <div id="coordinateDrawArea" class="coordinate-draw-panel__area">Diện tích: -- m2</div>
+                </div>
+                <div class="coordinate-draw-panel__actions">
+                    <button id="coordinateDrawApplyBtn" class="icon-btn" type="button" title="Vẽ đoạn thẳng" aria-label="Vẽ đoạn thẳng">
+                        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    </button>
+                    <button id="coordinateDrawFitBtn" class="icon-btn" type="button" title="Căn khung" aria-label="Căn khung tuyến vẽ">
+                        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
+                    </button>
+                    <button id="coordinateDrawClearBtn" class="icon-btn" type="button" title="Xóa tuyến vẽ" aria-label="Xóa tuyến vẽ">
+                        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
+                    </button>
+                </div>
+            </div>
+            <textarea id="coordinateDrawInput" rows="6" spellcheck="false" autocomplete="off" placeholder="13.82410,107.76280&#10;13.82520,107.76440&#10;13.82600,107.76610"></textarea>
+            <div id="coordinateDrawStatus" class="coordinate-draw-panel__meta">Mỗi dòng một tọa độ a,b</div>
         </div>
         <!-- Floating compass mode toggle (always visible) -->
         <button id="compassModeBtn" class="map-fab map-fab--compass-mode" title="Bắc trên đầu / Bám hướng" aria-label="Chuyển chế độ la bàn">
@@ -365,7 +389,7 @@
         <div class="onboarding-backdrop" id="onboardingBackdrop"></div>
         <div class="onboarding-spotlight" id="onboardingSpotlight"></div>
         <div class="onboarding-tooltip" id="onboardingTooltip">
-            <div class="onboarding-tooltip__step" id="onboardingStepLabel">Bước 1/5</div>
+            <div class="onboarding-tooltip__step" id="onboardingStepLabel">Bước 1/8</div>
             <div class="onboarding-tooltip__title" id="onboardingTitle"></div>
             <div class="onboarding-tooltip__body" id="onboardingBody"></div>
             <div class="onboarding-tooltip__actions">
@@ -392,7 +416,7 @@
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>
             </div>
             <h2>Chào mừng!</h2>
-            <p>Khám phá bản đồ đất đai theo đơn vị. Hướng dẫn nhanh 30 giây giúp bạn làm quen với các tính năng chính.</p>
+            <p>Khám phá bản đồ đất đai theo đơn vị. Hướng dẫn nhanh giúp bạn làm quen với các tính năng chính.</p>
             <div class="onboarding-welcome__actions">
                 <button class="onboarding-welcome__start" id="onboardingStartBtn" type="button">
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -407,8 +431,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
     <script src="https://unpkg.com/protomaps-leaflet@5.0.0/dist/protomaps-leaflet.js"></script>
-    <script src="script.js?v=20260710-gmaps-link"></script>
-    <script src="routing.js"></script>
+    <script src="script.js?v=20260711-guide-tools"></script>
+    <script src="routing.js?v=20260711-clear-route-exit"></script>
 </body>
 </html>
 

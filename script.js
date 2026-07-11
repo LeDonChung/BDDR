@@ -45,6 +45,12 @@ const areaMeasureState = {
   points: [],
   layer: null
 };
+const coordinateDrawState = {
+  active: false,
+  points: [],
+  layer: null,
+  error: ''
+};
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
@@ -843,6 +849,282 @@ function initAreaMeasureTool() {
   updateAreaMeasureUI();
 }
 
+function initCoordinateDrawTool() {
+  if (!map || coordinateDrawState.layer) return;
+  coordinateDrawState.layer = L.layerGroup().addTo(map);
+
+  const drawBtn = $('coordinateDrawBtn');
+  const applyBtn = $('coordinateDrawApplyBtn');
+  const fitBtn = $('coordinateDrawFitBtn');
+  const clearBtn = $('coordinateDrawClearBtn');
+  const input = $('coordinateDrawInput');
+  const panel = $('coordinateDrawPanel');
+
+  if (drawBtn) {
+    drawBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      setCoordinateDrawMode(!coordinateDrawState.active);
+    });
+  }
+  if (applyBtn) {
+    applyBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      applyCoordinateDrawInput();
+    });
+  }
+  if (fitBtn) {
+    fitBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      fitCoordinateDrawing();
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (event) => {
+      stopUtilityControlEvent(event);
+      resetCoordinateDrawing(true);
+    });
+  }
+  if (input) {
+    input.addEventListener('input', () => {
+      coordinateDrawState.error = '';
+      updateCoordinateDrawUI();
+    });
+  }
+  if (panel) {
+    ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach(type => {
+      panel.addEventListener(type, (event) => {
+        event.stopPropagation();
+        if (typeof L !== 'undefined' && L.DomEvent) L.DomEvent.stopPropagation(event);
+      });
+    });
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && coordinateDrawState.active) {
+      setCoordinateDrawMode(false);
+    }
+  });
+
+  updateCoordinateDrawUI();
+}
+
+function setCoordinateDrawMode(active) {
+  const nextActive = !!active;
+  if (coordinateDrawState.active === nextActive) return;
+
+  coordinateDrawState.active = nextActive;
+  if (nextActive) {
+    if (areaMeasureState.active) setAreaMeasureMode(false);
+    if (typeof closeRouteChoiceModal === 'function') closeRouteChoiceModal();
+    if (selectedLandmarkMarker && map) {
+      map.removeLayer(selectedLandmarkMarker);
+      selectedLandmarkMarker = null;
+    }
+    showToast('Nhập tọa độ rồi bấm vẽ đoạn thẳng', 2600);
+    setTimeout(() => {
+      const input = $('coordinateDrawInput');
+      if (input) input.focus();
+    }, 0);
+  } else {
+    resetCoordinateDrawing(false);
+  }
+  updateCoordinateDrawUI();
+}
+
+function resetCoordinateDrawing(clearInput) {
+  coordinateDrawState.points = [];
+  coordinateDrawState.error = '';
+  if (coordinateDrawState.layer) coordinateDrawState.layer.clearLayers();
+  if (clearInput) {
+    const input = $('coordinateDrawInput');
+    if (input) input.value = '';
+  }
+  updateCoordinateDrawUI();
+}
+
+function applyCoordinateDrawInput() {
+  const input = $('coordinateDrawInput');
+  const parsed = parseCoordinateDrawInput(input ? input.value : '');
+  if (parsed.error) {
+    coordinateDrawState.error = parsed.error;
+    updateCoordinateDrawUI();
+    showToast(parsed.error, 3200);
+    return;
+  }
+
+  coordinateDrawState.points = parsed.points;
+  coordinateDrawState.error = '';
+  renderCoordinateDrawing();
+  updateCoordinateDrawUI();
+  fitCoordinateDrawing();
+
+  const areaM2 = getCoordinateDrawArea();
+  showToast('Đã vẽ ' + parsed.points.length + ' điểm' + (parsed.points.length >= 3 ? ' • ' + formatMeasureArea(areaM2) : ''), 3000);
+}
+
+function parseCoordinateDrawInput(raw) {
+  const lines = String(raw || '').split(/\r?\n/);
+  const points = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const parts = line.replace(/[;，]/g, ',').split(',').map(part => part.trim()).filter(Boolean);
+    if (parts.length !== 2) {
+      return { points: [], error: 'Dòng ' + (i + 1) + ' chưa đúng định dạng a,b' };
+    }
+
+    let a = Number(parts[0]);
+    let b = Number(parts[1]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+      return { points: [], error: 'Dòng ' + (i + 1) + ' có tọa độ không hợp lệ' };
+    }
+
+    let lat = a;
+    let lng = b;
+    if (Math.abs(a) > 90 && Math.abs(a) <= 180 && Math.abs(b) <= 90) {
+      lat = b;
+      lng = a;
+    }
+
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      return { points: [], error: 'Dòng ' + (i + 1) + ' nằm ngoài miền tọa độ' };
+    }
+
+    points.push(L.latLng(lat, lng));
+  }
+
+  if (!points.length) {
+    return { points: [], error: 'Chưa có tọa độ để vẽ' };
+  }
+
+  return { points, error: '' };
+}
+
+function renderCoordinateDrawing() {
+  const group = coordinateDrawState.layer;
+  if (!group) return;
+  group.clearLayers();
+
+  const points = coordinateDrawState.points;
+  if (!points.length) return;
+
+  if (points.length >= 3) {
+    L.polygon(points, {
+      color: '#4f8cff',
+      weight: 2,
+      opacity: 0.45,
+      fillColor: '#4f8cff',
+      fillOpacity: 0.14,
+      interactive: false,
+      bubblingMouseEvents: false
+    }).addTo(group);
+  }
+
+  if (points.length >= 2) {
+    L.polyline(points, {
+      color: '#4f8cff',
+      weight: 3.5,
+      opacity: 0.96,
+      lineCap: 'round',
+      lineJoin: 'round',
+      interactive: false,
+      bubblingMouseEvents: false
+    }).addTo(group);
+
+    if (points.length >= 3) {
+      addCoordinateDrawClosingSegment(points[points.length - 1], points[0], group);
+    }
+  }
+
+  points.forEach((point, index) => {
+    L.marker(point, {
+      icon: createCoordinateDrawPointIcon(index + 1, index === 0, index === points.length - 1),
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 1010,
+      bubblingMouseEvents: false
+    }).addTo(group);
+  });
+}
+
+function addCoordinateDrawClosingSegment(from, to, group) {
+  L.polyline([from, to], {
+    color: '#22c55e',
+    weight: 3,
+    opacity: 0.88,
+    dashArray: '7 7',
+    lineCap: 'round',
+    lineJoin: 'round',
+    interactive: false,
+    bubblingMouseEvents: false
+  }).addTo(group);
+}
+
+function createCoordinateDrawPointIcon(number, isFirst, isLast) {
+  const classes = ['area-measure-point', 'coordinate-draw-point'];
+  if (isFirst) classes.push('coordinate-draw-point--start');
+  if (isLast && !isFirst) classes.push('coordinate-draw-point--end');
+  return L.divIcon({
+    className: '',
+    html: '<div class="' + classes.join(' ') + '">' + escapeHtml(number) + '</div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+}
+
+function getCoordinateDrawArea() {
+  const points = coordinateDrawState.points;
+  return points.length >= 3 ? calculateGeodesicArea(points) : 0;
+}
+
+function fitCoordinateDrawing() {
+  if (!map || !coordinateDrawState.points.length) return;
+  const points = coordinateDrawState.points;
+  if (points.length === 1) {
+    map.flyTo(points[0], Math.max(map.getZoom(), 17), { animate: true, duration: 0.35 });
+    return;
+  }
+
+  const bounds = L.latLngBounds(points);
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [64, 64] });
+  }
+}
+
+function updateCoordinateDrawUI() {
+  const panel = $('coordinateDrawPanel');
+  const drawBtn = $('coordinateDrawBtn');
+  const fitBtn = $('coordinateDrawFitBtn');
+  const clearBtn = $('coordinateDrawClearBtn');
+  const input = $('coordinateDrawInput');
+  const countEl = $('coordinateDrawCount');
+  const areaEl = $('coordinateDrawArea');
+  const statusEl = $('coordinateDrawStatus');
+  const active = coordinateDrawState.active;
+  const pointCount = coordinateDrawState.points.length;
+  const hasInput = !!(input && input.value.trim());
+  const areaM2 = getCoordinateDrawArea();
+
+  if (panel) panel.hidden = !active;
+  if (drawBtn) {
+    drawBtn.classList.toggle('icon-btn--active', active);
+    drawBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+  if (fitBtn) fitBtn.disabled = pointCount === 0;
+  if (clearBtn) clearBtn.disabled = pointCount === 0 && !hasInput;
+  if (countEl) countEl.textContent = pointCount + ' điểm';
+  if (areaEl) areaEl.textContent = 'Diện tích: ' + (pointCount >= 3 ? formatMeasureArea(areaM2) : '-- m2');
+  if (statusEl) {
+    const hasError = !!coordinateDrawState.error;
+    statusEl.classList.toggle('is-error', hasError);
+    statusEl.textContent = hasError
+      ? coordinateDrawState.error
+      : (pointCount >= 3 ? 'Diện tích tự khép kín từ điểm cuối về điểm đầu' : 'Mỗi dòng một tọa độ a,b');
+  }
+}
+
 function isAreaMeasureActive() {
   return !!areaMeasureState.active;
 }
@@ -853,6 +1135,7 @@ function setAreaMeasureMode(active) {
 
   areaMeasureState.active = nextActive;
   if (nextActive) {
+    if (coordinateDrawState.active) setCoordinateDrawMode(false);
     if (typeof closeRouteChoiceModal === 'function') closeRouteChoiceModal();
     if (selectedLandmarkMarker && map) {
       map.removeLayer(selectedLandmarkMarker);
@@ -1226,6 +1509,7 @@ function initMap() {
   addBaseLayerToggleControl();
   initMapUtilityControls();
   initAreaMeasureTool();
+  initCoordinateDrawTool();
 
   map.on('movestart', cancelKMLRender);
   map.on('zoomstart', onKMLZoomStart);
@@ -3700,6 +3984,8 @@ const OB_STEPS = [
   { title: 'Chọn điểm trên bản đồ', body: 'Chạm hoặc click vào bất kỳ điểm nào trên bản đồ để chọn điểm đến và mở tùy chọn chỉ đường.', target: '#map', autoAction(cleanup) { cleanup(); } },
   { title: 'Vị trí của tôi', body: 'Bấm nút định vị để lấy GPS và zoom về vị trí hiện tại của bạn.', target: '#locateBtn', autoAction(cleanup) { cleanup(); } },
   { title: 'Thông tin đơn vị', body: 'Bấm nút chữ i để xem thông tin chi tiết của đơn vị đang mở và đổi nhanh sang đơn vị khác nếu cần.', target: '#infoBtn', autoAction(cleanup) { cleanup(); } },
+  { title: 'Đo diện tích', body: 'Bấm nút đo diện tích rồi chấm lần lượt các góc trên bản đồ. Chạm lại điểm đầu để khép vùng và xem diện tích m2.', target: '#areaMeasureBtn', autoAction(cleanup) { cleanup(); } },
+  { title: 'Vẽ từ tọa độ', body: 'Bấm nút vẽ từ tọa độ, nhập mỗi dòng một cặp a,b rồi bấm dấu check để vẽ vùng và tính diện tích tự khép kín.', target: '#coordinateDrawBtn', autoAction(cleanup) { cleanup(); } },
   { title: 'Chế độ la bàn', body: 'Bấm nút la bàn để chuyển giữa bám hướng di chuyển và giữ Bắc ở phía trên.', target: '#compassModeBtn', autoAction(cleanup) { cleanup(); } },
   { title: 'Chuyển nền bản đồ', body: 'Nút lớp bản đồ ở góc dưới bên phải cho phép đổi giữa nền vệ tinh, đường phố và bình địa.', target: '.leaflet-control-layers-toggle', autoAction(cleanup) { cleanup(); } }
 ];
