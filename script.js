@@ -48,14 +48,10 @@ const coordinateDrawState = {
 
 const DEFAULT_CENTER = [13.8241, 107.7628];
 const DEFAULT_ZOOM = 15;
-const DATA_ROOT = 'data';
-// false: test local trong repo; true: doc PMTiles tren Cloudflare R2
-const USE_R2_PMTILES = true;
 // true: chan chuot phai va cac loi tat mo DevTools; false: cho phep binh thuong
 const BLOCK_DEVTOOLS_SHORTCUTS = false;
-const R2_PMTILES_BASE_URL = 'https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/bddr';
-// R2: <base>/bddr/<folder>/BDDR.pmtiles  (base đã chứa '/bddr')
 const LOG_API_BASE = 'https://bddr-tong-log.bddr1247912.workers.dev';
+const DATA_API_BASE = LOG_API_BASE + '/api/data';
 const LOGIN_LOG_ENDPOINT = LOG_API_BASE + '/api/login-log';
 const USERS_API_URL = LOG_API_BASE + '/api/users';
 const LOGIN_API_URL = LOG_API_BASE + '/api/login';
@@ -204,7 +200,6 @@ function userToProfile(user) {
   return {
     userCode: user.code,
     folder,
-    dataDir: DATA_ROOT + '/' + folder,
     displayName: user.team || user.code,
     shortLabel: user.shortLabel || user.team || user.code,
     subtitle: user.subtitle || ''
@@ -259,13 +254,23 @@ function stopSessionKeepalive() {
   }
 }
 
-function buildPmtilesCandidates(profile) {
-  const localSource = profile.dataDir + '/BDDR.pmtiles';
-  if (!USE_R2_PMTILES) return [localSource];
+function getDataAssetUrl(folder, file) {
+  const safeFolder = String(folder || 'main').trim().toLowerCase();
+  const safeFile = String(file || '').trim();
+  const url = DATA_API_BASE + '/' + encodeURIComponent(safeFolder) + '/' + encodeURIComponent(safeFile);
+  return currentSessionToken ? url + '?token=' + encodeURIComponent(currentSessionToken) : url;
+}
 
-  // Cấu trúc trên R2: <base>/<folder>/BDDR.pmtiles  (R2_PMTILES_BASE_URL đã có '/bddr')
-  const remoteFolderSource = R2_PMTILES_BASE_URL + '/' + profile.folder + '/BDDR.pmtiles';
-  return [remoteFolderSource, localSource];
+function getDataFetchOptions(options) {
+  const nextOptions = Object.assign({ cache: 'no-store' }, options || {});
+  const headers = Object.assign({}, nextOptions.headers || {});
+  if (currentSessionToken) headers.Authorization = 'Bearer ' + currentSessionToken;
+  nextOptions.headers = headers;
+  return nextOptions;
+}
+
+function buildPmtilesCandidates(profile) {
+  return [getDataAssetUrl(profile.folder, 'BDDR.pmtiles')];
 }
 
 function withProfileSources(profile) {
@@ -273,8 +278,9 @@ function withProfileSources(profile) {
   return Object.assign({}, profile, {
     pmtilesCandidates,
     pmtilesSource: pmtilesCandidates[0],
-    labelsSource: profile.dataDir + '/BDDR-labels.geojson',
-    geojsonSource: profile.dataDir + '/BDDR.geojson'
+    labelsSource: getDataAssetUrl(profile.folder, 'BDDR-labels.geojson'),
+    geojsonSource: getDataAssetUrl(profile.folder, 'BDDR.geojson'),
+    infoSource: getDataAssetUrl(profile.folder, 'info.txt')
   });
 }
 
@@ -343,8 +349,6 @@ function applyLoginBrand() {
 function formatLoginDisplayName(code) {
   if (currentUserRecord?.shortLabel) return currentUserRecord.shortLabel;
   if (currentUserRecord?.team) return currentUserRecord.team;
-  const match = code.match(/^cty75doi(\d{1,2})$/);
-  if (match) return 'Đội ' + Number(match[1]);
   return code;
 }
 
@@ -467,8 +471,8 @@ async function startAppForUser(sessionResult) {
 
   currentAuthUser = profile.userCode;
   currentUserRecord = sessionResult.user;
-  currentDataProfile = withProfileSources(profile);
   if (sessionResult.token) setSessionToken(sessionResult.token);
+  currentDataProfile = withProfileSources(profile);
   labelsLoaded = false;
   labelFeatures = [];
   applyDataProfileToUI();
@@ -667,11 +671,7 @@ function getAllowedTeams() {
       isMain: folder === 'main'
     }];
   }
-
-  const match = currentAuthUser.match(/^cty75doi(\d{1,2})$/);
-  if (!match) return [];
-  const teamNum = String(Number(match[1])).padStart(2, '0');
-  return [{ folder: 'doi' + teamNum, name: 'Doi ' + Number(match[1]), isMain: false }];
+  return [];
 }
 
 function renderInfoTeamPicker() {
@@ -712,18 +712,12 @@ function renderInfoTeamPicker() {
 
 async function fetchTeamInfoText(folder, teamName) {
   const safeFolder = normalizeTeamFolder(folder);
-  const safeTeamName = String(teamName || '').trim();
-  const candidates = [
-    'data/' + safeFolder + '/info.txt',
-    'data/' + safeFolder + '/' + safeFolder + '.txt'
-  ];
-  if (safeTeamName) candidates.push('data/' + safeFolder + '/' + safeTeamName + '.txt');
-  candidates.push('data/' + safeFolder + '.txt');
+  const candidates = [getDataAssetUrl(safeFolder, 'info.txt')];
 
   const tried = [];
   for (const url of Array.from(new Set(candidates))) {
     try {
-      const resp = await fetch(encodeURI(url), { cache: 'no-store' });
+      const resp = await fetch(url, getDataFetchOptions());
       tried.push(url);
       if (resp.ok) return await resp.text();
     } catch (err) {
@@ -1632,7 +1626,7 @@ function promptRoutePick() {
 async function dataAssetExists(source) {
   if (!source) return false;
   try {
-    const response = await fetch(source, { method: 'HEAD', cache: 'no-store' });
+    const response = await fetch(source, getDataFetchOptions({ method: 'HEAD' }));
     return response.ok;
   } catch (err) {
     return false;
@@ -1647,7 +1641,7 @@ async function resolveFirstAvailableSource(sources) {
 }
 
 async function loadGeoJSONFallback(source) {
-  const response = await fetch(source, { cache: 'no-store' });
+  const response = await fetch(source, getDataFetchOptions());
   if (!response.ok) throw new Error('HTTP ' + response.status + ' khi tải ' + source);
   parseAndIndexGeoJSON(await response.text());
 }
@@ -2765,7 +2759,7 @@ async function awaitLabelsLoad() {
   if (labelsLoaded) return;
   if (!currentDataProfile) return;
   try {
-    const response = await fetch(currentDataProfile.labelsSource, { cache: 'no-store' });
+    const response = await fetch(currentDataProfile.labelsSource, getDataFetchOptions());
     if (!response.ok) throw new Error('HTTP ' + response.status);
     parseLabelsGeoJSON(await response.json());
     labelsLoaded = true;

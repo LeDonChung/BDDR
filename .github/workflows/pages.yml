@@ -36,6 +36,8 @@ jobs:
             --exclude='.github/' \
             --exclude='_site/' \
             --exclude='node_modules/' \
+            --exclude='data/' \
+            --exclude='worker/' \
             --exclude='img/' \
             --exclude='*.log'
           touch _site/.nojekyll

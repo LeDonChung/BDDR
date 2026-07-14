@@ -292,7 +292,7 @@ npx wrangler d1 execute bddr_logs --command "SELECT * FROM login_logs ORDER BY i
 
 ### Lệnh theo tài khoản
 ```powershell
-npx wrangler d1 execute bddr_logs --command "SELECT time, account, ip, browser, latitude, longitude FROM login_logs WHERE account='cty75doi01' ORDER BY id DESC LIMIT 50" --remote
+npx wrangler d1 execute bddr_logs --command "SELECT time, account, ip, browser, latitude, longitude FROM login_logs WHERE account='ma-dang-nhap' ORDER BY id DESC LIMIT 50" --remote
 ```
 
 ## 10. Các trường đang lưu
@@ -320,7 +320,7 @@ Bảng `users` lưu danh sách mã đăng nhập và ánh xạ tới folder dữ
 
 | Cột | Kiểu | Mô tả |
 | --- | --- | --- |
-| `code` | TEXT PRIMARY KEY | Mã đăng nhập, ví dụ `cty75doi01`, `ledonchung` |
+| `code` | TEXT PRIMARY KEY | Mã đăng nhập, nên dùng chuỗi ngẫu nhiên không đoán được |
 | `team` | TEXT NOT NULL | Tên đội / đơn vị, ví dụ `Đội 1`, `Công ty 75` |
 | `folder` | TEXT NOT NULL | Folder dữ liệu, ví dụ `doi01`, `main` |
 | `short_label` | TEXT | Tên ngắn hiển thị |
@@ -331,16 +331,17 @@ Bảng `users` lưu danh sách mã đăng nhập và ánh xạ tới folder dữ
 
 ### Ánh xạ folder
 
-Web tự build đường dẫn dữ liệu từ `folder`:
+Web tự build đường dẫn dữ liệu từ `folder` và gọi qua Worker:
 
-- Local: `data/<folder>/BDDR.pmtiles` (vd `data/doi01/BDDR.pmtiles`).
-- R2: `<R2_BASE>/capstone/bddr/<folder>/BDDR.pmtiles` (vd `https://pub-2562e381abc44f8a928e9a2b16c6c633.r2.dev/capstone/bddr/doi01/BDDR.pmtiles`).
+- Local source: `data/<folder>/BDDR.pmtiles` (vd `data/doi01/BDDR.pmtiles`).
+- R2 private: bucket `capstone`, key `bddr/data/<folder>/BDDR.pmtiles`.
+- Worker endpoint: `/api/data/<folder>/BDDR.pmtiles`.
 
 Đổi `folder` của một user là web sẽ load PMTiles ở folder khác, không cần đụng code.
 
 ### Seed dữ liệu mẫu
 
-File `worker/seed-users.sql` chèn sẵn 1 tài khoản tổng (`ledonchung`) và 99 đội (`cty75doi1` … `cty75doi99`, folder `doi01` … `doi99`). Chạy 1 lần sau khi tạo bảng:
+File seed user không được commit lên Git. Nếu cần seed dữ liệu mẫu, tạo file local `worker/seed-users.sql` rồi chạy:
 
 ```powershell
 npx wrangler d1 execute bddr_logs --file worker/seed-users.sql --remote
@@ -356,11 +357,11 @@ npx wrangler d1 execute bddr_logs --file worker/seed-users.sql --remote
 Dùng Wrangler SQL trực tiếp (không cần đẩy code):
 
 ```powershell
-npx wrangler d1 execute bddr_logs --command "INSERT INTO users (code, team, folder) VALUES ('cty75doi100', 'Đội 100', 'doi100')" --remote
+npx wrangler d1 execute bddr_logs --command "INSERT INTO users (code, team, folder) VALUES ('ma-ngau-nhien', 'Đội 100', 'doi100')" --remote
 
-npx wrangler d1 execute bddr_logs --command "UPDATE users SET team = 'Đội 1 - Tây Nguyên', folder = 'doi01_tay_nguyen' WHERE code = 'cty75doi1'" --remote
+npx wrangler d1 execute bddr_logs --command "UPDATE users SET team = 'Đội 1 - Tây Nguyên', folder = 'doi01_tay_nguyen' WHERE code = 'ma-ngau-nhien'" --remote
 
-npx wrangler d1 execute bddr_logs --command "UPDATE users SET is_active = 0 WHERE code = 'cty75doi5'" --remote
+npx wrangler d1 execute bddr_logs --command "UPDATE users SET is_active = 0 WHERE code = 'ma-ngau-nhien'" --remote
 ```
 
 Web sẽ nhận thay đổi trong vòng 5 phút (cache localStorage TTL) hoặc ngay lần đăng nhập kế tiếp.
@@ -416,7 +417,7 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 ### Truy cập
 
 - URL: <https://bddr-tong-log.<ten-account>.workers.dev/admin>
-- Đăng nhập bằng tài khoản `ledonchung` (tài khoản tổng). Token lưu `localStorage[bddr-admin-token]`.
+- Đăng nhập bằng tài khoản admin đã cấu hình trong Worker secret `ADMIN_CODE`. Token lưu `localStorage[bddr-admin-token]`.
 - API gọi với `Authorization: Bearer <token>`. Worker kiểm tra session + quyền admin.
 
 ### 3 tab chính
@@ -425,7 +426,7 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 2. **Sessions**: chọn user → xem danh sách session đang hoạt động (token rút gọn, IP, UA, thời gian tạo/hết hạn/lần cuối). Có nút "Huỷ tất cả session" để đăng xuất hàng loạt.
 3. **Logs theo user**: chọn user → xem log đăng nhập tương ứng (dùng lại API `/api/login-log/recent` có sẵn).
 
-### API admin (tất cả cần Bearer token của `ledonchung`)
+### API admin
 
 | Method + Path | Mô tả |
 | --- | --- |
@@ -438,9 +439,9 @@ Trang SPA tích hợp sẵn trong Worker, dùng để quản lý users, xem sess
 
 ### Quy tắc
 
-- Không thể xoá tài khoản `ledonchung` (bảo vệ admin).
+- Không thể xoá tài khoản admin đang cấu hình (bảo vệ admin).
 - Xoá user tự động xoá luôn session của user đó.
-- Tất cả request admin phải có `Authorization` header và user phải là `ledonchung`. Nếu không sẽ trả 401/403.
+- Tất cả request admin phải có `Authorization` header và user phải khớp Worker secret `ADMIN_CODE`. Nếu không sẽ trả 401/403.
 
 ## 14. Đề xuất mở rộng sau này
 

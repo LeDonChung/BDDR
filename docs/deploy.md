@@ -105,10 +105,40 @@ npx wrangler d1 execute bddr_logs --command "SELECT * FROM login_logs ORDER BY i
 Xem theo tài khoản:
 
 ```powershell
-npx wrangler d1 execute bddr_logs --command "SELECT time, account, ip, browser, latitude, longitude FROM login_logs WHERE account = 'cty75doi01' ORDER BY id DESC LIMIT 50" --remote
+npx wrangler d1 execute bddr_logs --command "SELECT time, account, ip, browser, latitude, longitude FROM login_logs WHERE account = 'ma-dang-nhap' ORDER BY id DESC LIMIT 50" --remote
 ```
 
 Hoặc mở trang HTML: <https://bddr-tong-log.<ten-account>.workers.dev/>
+
+## Bước 7: Upload dữ liệu bản đồ lên R2 private
+
+R2 bucket đang dùng: `capstone`. Object prefix đang dùng: `bddr/data`.
+
+Upload toàn bộ thư mục `data/` local:
+
+```powershell
+npm run r2:upload-data
+```
+
+Tắt public `r2.dev` URL của bucket để dữ liệu chỉ đi qua Worker:
+
+```powershell
+npx wrangler r2 bucket dev-url disable capstone
+```
+
+Dry-run để kiểm tra key trước khi upload:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/data/upload-data-to-r2.ps1 -DryRun
+```
+
+Worker đọc dữ liệu qua R2 binding `DATA_BUCKET`, không dùng URL public `r2.dev`. Client đọc qua:
+
+```text
+https://bddr-tong-log.<ten-account>.workers.dev/api/data/<folder>/<file>
+```
+
+Các file runtime được Worker cho phép: `BDDR.pmtiles`, `BDDR-labels.geojson`, `BDDR.geojson`, `info.txt`. Các file khác vẫn có thể lưu trên R2 để archive/build lại, nhưng không được route data public phục vụ.
 
 ## Dữ liệu đang lưu
 
@@ -126,6 +156,7 @@ Hoặc mở trang HTML: <https://bddr-tong-log.<ten-account>.workers.dev/>
 - GitHub Pages vẫn free và giữ nguyên.
 - Cloudflare Worker + D1 có free tier đủ rộng cho log đăng nhập nội bộ.
 - Không lưu được file .log trên GitHub Pages vì đó là host tĩnh.
+- Thư mục `data/` không được publish lên GitHub Pages; workflow Pages đã exclude `data/`.
 - Nếu user không cấp quyền vị trí, log vẫn có tài khoản, thời gian, IP, trình duyệt nhưng tọa độ sẽ null.
 - Log được ghi **ngay khi user đăng nhập thành công** (kể cả khi chưa cấp quyền vị trí). Nếu sau đó user cấp quyền, hệ thống sẽ tự ghi thêm một dòng log kèm tọa độ trong cùng phiên đăng nhập.
 - Danh sách mã đăng nhập và mapping folder lưu trong bảng users của D1. Sửa user không cần đẩy code.

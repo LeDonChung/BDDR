@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_login_logs_account ON login_logs(account);
 
 -- Bảng users: danh sách mã đăng nhập + mapping folder dữ liệu (data/doi01, capstone/bddr/doi01/...)
 CREATE TABLE IF NOT EXISTS users (
-  code          TEXT PRIMARY KEY,        -- mã đăng nhập, vd: cty75doi01, doankinhtecty75
+    code          TEXT PRIMARY KEY,        -- mã đăng nhập ngẫu nhiên, không đoán được
   team          TEXT NOT NULL,           -- tên đội / đơn vị, vd: Đội 1, Công ty 75
   folder        TEXT NOT NULL,           -- folder dữ liệu tương ứng (local + R2), vd: doi01, main
   short_label   TEXT,                    -- tên ngắn hiển thị, vd: Đ�1
@@ -45,5 +45,4 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_code ON sessions(code);
-
 

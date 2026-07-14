@@ -17,14 +17,19 @@ yarn-debug.log*
 yarn-error.log*
 
 # Large source/export files not suitable for GitHub
+/data/
+/worker/seed-users.sql
+/docs/thong-bao.md
+/docs/kmz-to-geojson.md
+/_dxf_places.txt
 BDDR Tong.kml
-data/BDDR Tong.kml
-data/BDDR.geojson
-data/.*
-data/BDDR.pmtiles
-data/BDDR-tippecanoe.geojsonl
-data/BDDR.mbtiles
-data/*/BDDR.geojson
-data/*/BDDR.pmtiles
-data/*/BDDR-tippecanoe.geojsonl
-data/*/BDDR.mbtiles
+/data/BDDR Tong.kml
+/data/BDDR.geojson
+/data/.*
+/data/BDDR.pmtiles
+/data/BDDR-tippecanoe.geojsonl
+/data/BDDR.mbtiles
+/data/*/BDDR.geojson
+/data/*/BDDR.pmtiles
+/data/*/BDDR-tippecanoe.geojsonl
+/data/*/BDDR.mbtiles

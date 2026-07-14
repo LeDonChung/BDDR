@@ -1,10 +1,20 @@
 ﻿const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'POST, GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, If-None-Match, If-Modified-Since',
+  'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range, ETag',
   'Access-Control-Max-Age': '86400'
 };
 
+const DEFAULT_DATA_R2_PREFIX = 'bddr/data';
+const DATA_ROUTE_PREFIX = '/api/data/';
+const DATA_PUBLIC_ROUTE_PREFIX = '/capstone/bddr/data/';
+const ALLOWED_DATA_FILES = new Set([
+  'BDDR.pmtiles',
+  'BDDR-labels.geojson',
+  'BDDR.geojson',
+  'info.txt'
+]);
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 500;
 const SESSION_TTL_MS = 60 * 60 * 1000;          // 60 phút
@@ -76,12 +86,9 @@ function cleanNumber(value) {
 }
 
 function generateToken(bytes) {
-  // 16 bytes hex là đủ cho session token; tránh crypto.getRandomValues có thể bị lỗi runtime
-  let s = '';
-  for (let i = 0; i < bytes / 2; i++) {
-    s += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
-  }
-  return s;
+  const values = new Uint8Array(bytes);
+  crypto.getRandomValues(values);
+  return Array.from(values, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function isoFromNow(deltaMs) {
@@ -214,7 +221,8 @@ async function updateUser(env, code, payload) {
 
 async function deleteUser(env, code) {
   const normalized = cleanText(code, 80).toLowerCase();
-  if (normalized === ADMIN_CODE) {
+  const adminCode = getAdminCode(env);
+  if (adminCode && normalized === adminCode) {
     throw new Error('Không thể xoá tài khoản admin');
   }
   // Xoá sessions của user trước
@@ -248,26 +256,169 @@ async function destroySessionsByCode(env, code) {
   return { ok: true, code: normalized, deleted: (result && result.meta && result.meta.changes) || 0 };
 }
 
-const ADMIN_CODE = 'ledonchung';
+function getAdminCode(env) {
+  return cleanText(env.ADMIN_CODE || '', 80).toLowerCase();
+}
 
-function isAdminUser(user) {
-  return user && user.code === ADMIN_CODE;
+function isAdminUser(user, env) {
+  const adminCode = getAdminCode(env);
+  return !!(adminCode && user && user.code === adminCode);
+}
+
+function getRequestToken(request) {
+  const auth = request.headers.get('authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (m) return m[1].trim();
+  const url = new URL(request.url);
+  return cleanText(url.searchParams.get('token') || '', 512);
+}
+
+async function getAuthenticatedUserFromRequest(request, env) {
+  const token = getRequestToken(request);
+  if (!token) return null;
+  const session = await loadSession(env, token);
+  if (!session) return null;
+  const user = await findAnyUserByCode(env, session.code);
+  if (!user) return null;
+  return { user, session };
 }
 
 async function getUserFromRequest(request, env) {
-  const auth = request.headers.get('authorization') || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  if (!m) return null;
-  const session = await loadSession(env, m[1].trim());
-  if (!session) return null;
-  return await findAnyUserByCode(env, session.code);
+  const auth = await getAuthenticatedUserFromRequest(request, env);
+  return auth ? auth.user : null;
 }
 
 async function requireAdmin(request, env) {
   const user = await getUserFromRequest(request, env);
   if (!user) return { error: 'Cần đăng nhập admin', status: 401 };
-  if (!isAdminUser(user)) return { error: 'Chỉ tài khoản ' + ADMIN_CODE + ' mới có quyền admin', status: 403 };
+  if (!isAdminUser(user, env)) return { error: 'Chỉ tài khoản admin mới có quyền admin', status: 403 };
   return { user };
+}
+
+function cleanDataPathPart(value) {
+  const text = String(value || '').trim();
+  if (!/^[A-Za-z0-9_.-]{1,120}$/.test(text)) return '';
+  if (text.includes('..')) return '';
+  return text;
+}
+
+function parseDataAssetPath(pathname) {
+  let rest = '';
+  if (pathname.startsWith(DATA_ROUTE_PREFIX)) {
+    rest = pathname.slice(DATA_ROUTE_PREFIX.length);
+  } else if (pathname.startsWith(DATA_PUBLIC_ROUTE_PREFIX)) {
+    rest = pathname.slice(DATA_PUBLIC_ROUTE_PREFIX.length);
+  } else {
+    return null;
+  }
+
+  const parts = rest.split('/').filter(Boolean).map(part => {
+    try { return decodeURIComponent(part); } catch (err) { return ''; }
+  });
+  if (parts.length !== 2) {
+    return { error: 'Đường dẫn data không hợp lệ', status: 400 };
+  }
+
+  const folder = cleanDataPathPart(parts[0]).toLowerCase();
+  const file = cleanDataPathPart(parts[1]);
+  if (!folder || !file || !ALLOWED_DATA_FILES.has(file)) {
+    return { error: 'File data không được phép truy cập', status: 403 };
+  }
+
+  return { folder, file };
+}
+
+function getDataR2Prefix(env) {
+  return cleanText(env.DATA_R2_PREFIX || DEFAULT_DATA_R2_PREFIX, 200)
+    .replace(/^\/+|\/+$/g, '');
+}
+
+function getDataObjectKey(env, folder, file) {
+  const prefix = getDataR2Prefix(env);
+  return (prefix ? prefix + '/' : '') + folder + '/' + file;
+}
+
+function canUserAccessDataFolder(user, folder, env) {
+  if (!user || !user.isActive) return false;
+  if (isAdminUser(user, env)) return true;
+  const userFolder = cleanDataPathPart(user.folder || '').toLowerCase();
+  return userFolder === 'main' || userFolder === folder;
+}
+
+function getDataContentType(file) {
+  if (file.endsWith('.pmtiles')) return 'application/octet-stream';
+  if (file.endsWith('.geojson')) return 'application/geo+json; charset=utf-8';
+  if (file.endsWith('.txt')) return 'text/plain; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+function getObjectRangeInfo(object) {
+  const range = object && object.range;
+  if (!range) return null;
+
+  if (typeof range.offset === 'number') {
+    const start = range.offset;
+    const length = typeof range.length === 'number'
+      ? range.length
+      : Math.max(0, object.size - start);
+    return { start, end: start + Math.max(0, length - 1), length };
+  }
+
+  if (typeof range.suffix === 'number') {
+    const length = Math.min(range.suffix, object.size);
+    const start = Math.max(0, object.size - length);
+    return { start, end: object.size - 1, length };
+  }
+
+  return null;
+}
+
+async function serveDataAsset(request, env, asset) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return json({ ok: false, error: 'Method not allowed' }, 405);
+  }
+  if (asset.error) return json({ ok: false, error: asset.error }, asset.status || 400);
+  if (!env.DATA_BUCKET) {
+    return json({ ok: false, error: 'DATA_BUCKET chưa được cấu hình' }, 500);
+  }
+
+  const auth = await getAuthenticatedUserFromRequest(request, env);
+  if (!auth || !auth.user || !auth.user.isActive) {
+    return json({ ok: false, error: 'Cần đăng nhập để tải dữ liệu' }, 401);
+  }
+  const reqFp = sessionFingerprint(request, getClientIp(request), request.headers.get('user-agent'));
+  const sessFp = sessionFingerprint(request, auth.session.ip, auth.session.ua);
+  if (reqFp !== sessFp) {
+    return json({ ok: false, error: 'Phiên không hợp lệ' }, 401);
+  }
+
+  if (!canUserAccessDataFolder(auth.user, asset.folder, env)) {
+    return json({ ok: false, error: 'Không có quyền truy cập dữ liệu này' }, 403);
+  }
+
+  const key = getDataObjectKey(env, asset.folder, asset.file);
+  const hasRangeRequest = !!request.headers.get('range');
+  const getOptions = hasRangeRequest ? { range: request.headers } : {};
+  const object = await env.DATA_BUCKET.get(key, getOptions);
+  if (!object) return json({ ok: false, error: 'Không tìm thấy dữ liệu' }, 404);
+
+  const headers = new Headers(CORS_HEADERS);
+  object.writeHttpMetadata(headers);
+  headers.set('Content-Type', getDataContentType(asset.file));
+  headers.set('ETag', object.httpEtag);
+  headers.set('Accept-Ranges', 'bytes');
+  headers.set('Cache-Control', 'private, max-age=300');
+
+  const rangeInfo = hasRangeRequest ? getObjectRangeInfo(object) : null;
+  const status = rangeInfo ? 206 : 200;
+  if (rangeInfo) {
+    headers.set('Content-Range', 'bytes ' + rangeInfo.start + '-' + rangeInfo.end + '/' + object.size);
+    headers.set('Content-Length', String(rangeInfo.length));
+  } else {
+    headers.set('Content-Length', String(object.size));
+  }
+
+  return new Response(request.method === 'HEAD' ? null : object.body, { status, headers });
 }
 
 function renderDashboardPage() {
@@ -716,7 +867,7 @@ function renderDashboardPage() {
 
 <script>
 const BASE = location.origin;
-const ADMIN_CODE = 'ledonchung';
+let currentAdminCode = '';
 const TOKEN_KEY = 'bddr-admin-token';
 let adminToken = localStorage.getItem(TOKEN_KEY) || null;
 let allUsers = [];
@@ -760,6 +911,7 @@ async function api(path, options) {
 
 function setLoggedInUI(token, userCode) {
   adminToken = token;
+  currentAdminCode = userCode || '';
   if (token) localStorage.setItem(TOKEN_KEY, token);
   $('#loginShell').hidden = true;
   $('#app').hidden = false;
@@ -769,6 +921,7 @@ function setLoggedInUI(token, userCode) {
 
 function setLoggedOutUI() {
   adminToken = null;
+  currentAdminCode = '';
   localStorage.removeItem(TOKEN_KEY);
   $('#loginShell').hidden = false;
   $('#app').hidden = true;
@@ -794,7 +947,7 @@ async function trySession() {
   if (!adminToken) return setLoggedOutUI();
   try {
     const r = await api('/api/session');
-    if (r.user && r.user.code === ADMIN_CODE) {
+    if (r.ok && r.user) {
       setLoggedInUI(adminToken, r.user.code);
     } else {
       toast('Tài khoản không có quyền admin', 'err');
@@ -818,10 +971,6 @@ async function doLogin(event) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.ok) throw new Error(body.error || ('HTTP ' + response.status));
-    if (!body.user || body.user.code !== ADMIN_CODE) {
-      $('#loginErr').textContent = 'Chỉ tài khoản tổng mới có quyền admin';
-      return;
-    }
     setLoggedInUI(body.token, body.user.code);
   } catch (err) {
     $('#loginErr').textContent = err.message;
@@ -873,7 +1022,7 @@ function renderUsers() {
     '<td><div class="row-actions">' +
       '<button class="btn" data-act="edit" data-code="' + esc(u.code) + '">Sửa</button>' +
       '<button class="btn" data-act="toggle" data-code="' + esc(u.code) + '" data-active="' + (u.isActive ? '1' : '0') + '">' + (u.isActive ? 'Khóa' : 'Mở') + '</button>' +
-      (u.code === ADMIN_CODE ? '' : '<button class="btn danger" data-act="delete" data-code="' + esc(u.code) + '">Xóa</button>') +
+      (u.code === currentAdminCode ? '' : '<button class="btn danger" data-act="delete" data-code="' + esc(u.code) + '">Xóa</button>') +
     '</div></td>' +
     '</tr>'
   ).join('');
@@ -912,7 +1061,7 @@ function renderUserDetail() {
       '<button id="detailEdit" class="btn primary" type="button">Sửa user</button>' +
       '<button id="detailToggle" class="btn" type="button">' + (user.isActive ? 'Khóa user' : 'Mở user') + '</button>' +
       '<button id="detailKillSessions" class="btn danger" type="button">Hủy sessions</button>' +
-      (user.code === ADMIN_CODE ? '' : '<button id="detailDelete" class="btn danger" type="button">Xóa user</button>') +
+      (user.code === currentAdminCode ? '' : '<button id="detailDelete" class="btn danger" type="button">Xóa user</button>') +
     '</div>' +
     '<section class="session-block session-table">' +
       '<div class="session-head"><div><h2>Sessions</h2><p id="sessionSummary">Đang tải...</p></div><button id="sessionReload" class="btn" type="button">Tải lại</button></div>' +
@@ -1019,7 +1168,7 @@ function openModal(user) {
   $('#modalTitle').textContent = user ? 'Sửa user: ' + user.code : 'Thêm user mới';
   const f = $('#userForm');
   f.reset();
-  f.elements.code.disabled = !!(user && user.code === ADMIN_CODE);
+  f.elements.code.disabled = !!(user && user.code === currentAdminCode);
   if (user) {
     f.elements.code.value = user.code || '';
     f.elements.team.value = user.team || '';
@@ -1070,7 +1219,7 @@ async function saveUser(event) {
 }
 
 async function deleteUser(code) {
-  if (code === ADMIN_CODE) { toast('Không thể xóa tài khoản tổng', 'err'); return; }
+  if (code === currentAdminCode) { toast('Không thể xóa tài khoản admin', 'err'); return; }
   if (!confirm('Xóa user ' + code + ' và toàn bộ session của user này?')) return;
   try {
     await api('/api/users?code=' + encodeURIComponent(code), { method: 'DELETE' });
@@ -1239,7 +1388,7 @@ function renderAdminPage() {
   <!-- Login card (hiện khi chưa có token) -->
   <div id="loginCard" class="login-card">
     <h2>Đăng nhập admin</h2>
-    <p>Chỉ tài khoản <code>ledonchung</code> mới có quyền truy cập trang này.</p>
+        <p>Chỉ tài khoản admin mới có quyền truy cập trang này.</p>
     <input id="loginCode" type="text" placeholder="Nhập mã đăng nhập" autocomplete="off" />
     <button id="loginBtn">Đăng nhập</button>
     <div class="err" id="loginErr"></div>
@@ -1333,7 +1482,7 @@ function renderAdminPage() {
 
 <script>
 const BASE = location.origin;
-const ADMIN_CODE = 'ledonchung';
+let currentAdminCode = '';
 const TOKEN_KEY = 'bddr-admin-token';
 let adminToken = localStorage.getItem(TOKEN_KEY) || null;
 let allUsers = [];
@@ -1362,6 +1511,7 @@ async function api(path, options) {
 
 function setLoggedInUI(token, userCode) {
   adminToken = token;
+  currentAdminCode = userCode || '';
   if (token) localStorage.setItem(TOKEN_KEY, token);
   $('#loginCard').style.display = 'none';
   $('#app').style.display = '';
@@ -1371,6 +1521,7 @@ function setLoggedInUI(token, userCode) {
 
 function setLoggedOutUI() {
   adminToken = null;
+  currentAdminCode = '';
   localStorage.removeItem(TOKEN_KEY);
   $('#loginCard').style.display = '';
   $('#app').style.display = 'none';
@@ -1381,7 +1532,7 @@ async function trySession() {
   if (!adminToken) return setLoggedOutUI();
   try {
     const r = await api('/api/session');
-    if (r.user && r.user.code === ADMIN_CODE) {
+    if (r.ok && r.user) {
       setLoggedInUI(adminToken, r.user.code);
     } else {
       toast('Tài khoản không có quyền admin', 'err');
@@ -1403,12 +1554,6 @@ async function doLogin() {
     });
     const body = await r.json();
     if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
-    if (body.user.code !== ADMIN_CODE) {
-      $('#loginErr').textContent = 'Chỉ tài khoản tổng mới có quyền admin';
-      // vẫn setLoggedInUI để user thấy web vẫn dùng được session, nhưng API admin sẽ 403
-      setLoggedInUI(body.token, body.user.code);
-      return;
-    }
     setLoggedInUI(body.token, body.user.code);
   } catch (err) {
     $('#loginErr').textContent = err.message;
@@ -1451,7 +1596,7 @@ function renderUsers() {
     '<td><div class="row-actions">' +
       '<button data-act="edit" data-code="' + esc(u.code) + '">Sửa</button>' +
       '<button data-act="toggle" data-code="' + esc(u.code) + '" data-active="' + (u.isActive ? '1' : '0') + '">' + (u.isActive ? 'Khoá' : 'Mở') + '</button>' +
-      (u.code === ADMIN_CODE ? '' : '<button data-act="delete" data-code="' + esc(u.code) + '" class="danger">Xoá</button>') +
+      (u.code === currentAdminCode ? '' : '<button data-act="delete" data-code="' + esc(u.code) + '" class="danger">Xoá</button>') +
     '</div></td>' +
     '</tr>'
   ).join('');
@@ -1470,7 +1615,7 @@ function openModal(user) {
   $('#modalTitle').textContent = user ? 'Sửa user: ' + user.code : 'Thêm user mới';
   const f = $('#userForm');
   f.reset();
-  f.elements.code.disabled = !!(user && user.code === ADMIN_CODE);
+  f.elements.code.disabled = !!(user && user.code === currentAdminCode);
   if (user) {
     f.elements.code.value = user.code || '';
     f.elements.team.value = user.team || '';
@@ -1518,7 +1663,7 @@ async function saveUser(ev) {
 }
 
 async function deleteUser(code) {
-  if (code === ADMIN_CODE) { toast('Không thể xoá tài khoản tổng', 'err'); return; }
+  if (code === currentAdminCode) { toast('Không thể xoá tài khoản admin', 'err'); return; }
   if (!confirm('Xoá user ' + code + ' và toàn bộ session của user này? Không thể hoàn tác.')) return;
   try {
     await api('/api/users?code=' + encodeURIComponent(code), { method: 'DELETE' });
@@ -1696,10 +1841,6 @@ async function loadSession(env, token) {
   ).bind(token).first();
   if (!row) return null;
   const expiresMs = parseIsoUtc(row.expires_at);
-  if (row.expires_at) {
-    // eslint-disable-next-line no-console
-    console.log('loadSession debug', JSON.stringify({ token: row.token.slice(0,8), raw: row.expires_at, expiresMs, now: Date.now(), diff: expiresMs - Date.now() }));
-  }
   if (!expiresMs || expiresMs < Date.now()) {
     await destroySession(env, token);
     return null;
@@ -1744,7 +1885,6 @@ function userToProfile(user) {
   return {
     userCode: user.code,
     folder,
-    dataDir: 'data/' + folder,
     displayName: user.team || user.code,
     shortLabel: user.shortLabel || user.team || user.code,
     subtitle: user.subtitle || ''
@@ -1865,7 +2005,7 @@ function renderLogsTable(data, options) {
   const filterBlock = `
     <form method="get" class="filter">
       <label>Mã đăng nhập:
-        <input type="text" name="account" value="${escapeHtml(account)}" placeholder="vd: cty75doi01" />
+        <input type="text" name="account" value="${escapeHtml(account)}" placeholder="mã đăng nhập" />
       </label>
       <label>Số dòng/trang:
         <input type="number" name="pageSize" min="1" max="${PAGE_SIZE_MAX}" value="${escapeHtml(pageSize)}" />
@@ -2011,6 +2151,11 @@ export default {
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    const dataAsset = parseDataAssetPath(url.pathname);
+    if (dataAsset) {
+      return serveDataAsset(request, env, dataAsset);
     }
 
     // Một dashboard duy nhất cho quản trị user và logs.
