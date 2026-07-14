@@ -117,6 +117,36 @@ function isBrowserGuardedPath(pathname) {
     pathname.startsWith(DATA_PUBLIC_ROUTE_PREFIX);
 }
 
+function getCorsResponseOrigin(request, env) {
+  const origin = normalizeOrigin(request.headers.get('origin'));
+  if (origin && getAllowedBrowserOrigins(request, env).has(origin)) return origin;
+  return DEFAULT_ALLOWED_BROWSER_ORIGINS[0];
+}
+
+function setVaryOrigin(headers) {
+  const current = headers.get('Vary');
+  if (!current) {
+    headers.set('Vary', 'Origin');
+    return;
+  }
+  if (current === '*' || current.toLowerCase().split(',').map(v => v.trim()).includes('origin')) return;
+  headers.set('Vary', current + ', Origin');
+}
+
+function withCors(response, request, env) {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    headers.set(key, value);
+  }
+  headers.set('Access-Control-Allow-Origin', getCorsResponseOrigin(request, env));
+  setVaryOrigin(headers);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
 function generateToken(bytes) {
   const values = new Uint8Array(bytes);
   crypto.getRandomValues(values);
@@ -2177,8 +2207,7 @@ async function writeLoginLog(request, env) {
   return json({ ok: true, id: result.meta.last_row_id });
 }
 
-export default {
-  async fetch(request, env) {
+async function handleFetch(request, env) {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
@@ -2350,7 +2379,13 @@ export default {
     }
 
 
-    return json({ ok: false, error: 'Not found' }, 404);
+  return json({ ok: false, error: 'Not found' }, 404);
+}
+
+export default {
+  async fetch(request, env) {
+    const response = await handleFetch(request, env);
+    return withCors(response, request, env);
   }
 };
 

@@ -4,7 +4,7 @@ compatibility_date = "2026-07-06"
 
 [vars]
 DATA_R2_PREFIX = "bddr/data"
-ALLOWED_BROWSER_ORIGINS = "https://ledonchung.github.io"
+ALLOWED_BROWSER_ORIGINS = "https://ledonchung.github.io,http://127.0.0.1:5501"
 
 [[r2_buckets]]
 binding = "DATA_BUCKET"
