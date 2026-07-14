@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b1220">
     <title>Bản đồ công ty 75</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-    <link rel="stylesheet" href="style.css?v=20260711-coordinate-area-only">
+    <link rel="stylesheet" href="style.css?v=20260714-measure-coordinate-close">
 </head>
 <body>
     <section id="loginScreen" class="login-screen" aria-hidden="false">
@@ -59,46 +59,35 @@
             <button id="infoBtn" class="icon-btn" title="Thông tin đơn vị" aria-label="Thông tin đơn vị">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
             </button>
-            <button id="areaMeasureBtn" class="icon-btn" title="Đo diện tích" aria-label="Chế độ đo diện tích" aria-pressed="false">
+            <button id="areaMeasureBtn" class="icon-btn" title="Đo diện tích / vẽ từ tọa độ" aria-label="Đo diện tích và vẽ từ tọa độ" aria-pressed="false">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7 11 3l8 5-2 11H7L4 7Z"/><circle cx="4" cy="7" r="1.6"/><circle cx="11" cy="3" r="1.6"/><circle cx="19" cy="8" r="1.6"/><circle cx="17" cy="19" r="1.6"/><circle cx="7" cy="19" r="1.6"/></svg>
-            </button>
-            <button id="coordinateDrawBtn" class="icon-btn" title="Vẽ từ tọa độ" aria-label="Chế độ vẽ từ tọa độ" aria-pressed="false">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 9 9l5 4 6-8"/><circle cx="4" cy="18" r="2"/><circle cx="9" cy="9" r="2"/><circle cx="14" cy="13" r="2"/><circle cx="20" cy="5" r="2"/></svg>
             </button>
             <button id="helpBtn" class="icon-btn" title="Xem hướng dẫn" aria-label="Xem hướng dẫn sử dụng">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
             </button>
-        </div>
-        <div id="areaMeasurePanel" class="area-measure-panel" hidden>
-            <div class="area-measure-panel__main">
-                <span id="areaMeasureCount">0 điểm</span>
-                <strong id="areaMeasureArea">-- m2</strong>
-            </div>
-            <div id="areaMeasurePerimeter" class="area-measure-panel__meta">Chu vi: -- m</div>
-            <div class="area-measure-panel__actions">
-                <button id="areaUndoBtn" class="icon-btn" type="button" title="Hoàn tác điểm cuối" aria-label="Hoàn tác điểm cuối">
-                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
-                </button>
-                <button id="areaClearBtn" class="icon-btn" type="button" title="Xóa phép đo" aria-label="Xóa phép đo">
-                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
-                </button>
-            </div>
         </div>
         <div id="coordinateDrawPanel" class="coordinate-draw-panel" hidden>
             <div class="coordinate-draw-panel__head">
                 <div class="coordinate-draw-panel__main">
                     <span id="coordinateDrawCount">0 điểm</span>
                     <div id="coordinateDrawArea" class="coordinate-draw-panel__area">Diện tích: -- m2</div>
+                    <div id="coordinateDrawPerimeter" class="coordinate-draw-panel__perimeter">Chu vi: -- m</div>
                 </div>
                 <div class="coordinate-draw-panel__actions">
-                    <button id="coordinateDrawApplyBtn" class="icon-btn" type="button" title="Vẽ đoạn thẳng" aria-label="Vẽ đoạn thẳng">
+                    <button id="coordinateDrawUndoBtn" class="icon-btn" type="button" title="Hoàn tác điểm cuối" aria-label="Hoàn tác điểm cuối">
+                        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
+                    </button>
+                    <button id="coordinateDrawApplyBtn" class="icon-btn" type="button" title="Cập nhật từ tọa độ" aria-label="Cập nhật từ tọa độ">
                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                     </button>
                     <button id="coordinateDrawFitBtn" class="icon-btn" type="button" title="Căn khung" aria-label="Căn khung tuyến vẽ">
                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
                     </button>
-                    <button id="coordinateDrawClearBtn" class="icon-btn" type="button" title="Xóa tuyến vẽ" aria-label="Xóa tuyến vẽ">
+                    <button id="coordinateDrawClearBtn" class="icon-btn" type="button" title="Xóa vùng vẽ" aria-label="Xóa vùng vẽ">
                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
+                    </button>
+                    <button id="coordinateDrawCloseBtn" class="icon-btn" type="button" title="Đóng bảng" aria-label="Đóng bảng đo diện tích">
+                        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
                     </button>
                 </div>
             </div>
@@ -389,7 +378,7 @@
         <div class="onboarding-backdrop" id="onboardingBackdrop"></div>
         <div class="onboarding-spotlight" id="onboardingSpotlight"></div>
         <div class="onboarding-tooltip" id="onboardingTooltip">
-            <div class="onboarding-tooltip__step" id="onboardingStepLabel">Bước 1/8</div>
+            <div class="onboarding-tooltip__step" id="onboardingStepLabel">Bước 1/7</div>
             <div class="onboarding-tooltip__title" id="onboardingTitle"></div>
             <div class="onboarding-tooltip__body" id="onboardingBody"></div>
             <div class="onboarding-tooltip__actions">
@@ -431,7 +420,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
     <script src="https://unpkg.com/protomaps-leaflet@5.0.0/dist/protomaps-leaflet.js"></script>
-    <script src="script.js?v=20260711-guide-tools"></script>
+    <script src="script.js?v=20260714-measure-coordinate-close-guide"></script>
     <script src="routing.js?v=20260711-clear-route-exit"></script>
 </body>
 </html>
