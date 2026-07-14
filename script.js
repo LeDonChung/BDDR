@@ -257,7 +257,11 @@ function stopSessionKeepalive() {
 function getDataAssetUrl(folder, file) {
   const safeFolder = String(folder || 'main').trim().toLowerCase();
   const safeFile = String(file || '').trim();
-  const url = DATA_API_BASE + '/' + encodeURIComponent(safeFolder) + '/' + encodeURIComponent(safeFile);
+  return DATA_API_BASE + '/' + encodeURIComponent(safeFolder) + '/' + encodeURIComponent(safeFile);
+}
+
+function getPmtilesAssetUrl(folder) {
+  const url = getDataAssetUrl(folder, 'BDDR.pmtiles');
   return currentSessionToken ? url + '?token=' + encodeURIComponent(currentSessionToken) : url;
 }
 
@@ -270,7 +274,7 @@ function getDataFetchOptions(options) {
 }
 
 function buildPmtilesCandidates(profile) {
-  return [getDataAssetUrl(profile.folder, 'BDDR.pmtiles')];
+  return [getPmtilesAssetUrl(profile.folder)];
 }
 
 function withProfileSources(profile) {

@@ -1,11 +1,14 @@
 ﻿const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': 'https://ledonchung.github.io',
   'Access-Control-Allow-Methods': 'POST, GET, HEAD, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, If-None-Match, If-Modified-Since',
   'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range, ETag',
   'Access-Control-Max-Age': '86400'
 };
 
+const DEFAULT_ALLOWED_BROWSER_ORIGINS = [
+  'https://ledonchung.github.io'
+];
 const DEFAULT_DATA_R2_PREFIX = 'bddr/data';
 const DATA_ROUTE_PREFIX = '/api/data/';
 const DATA_PUBLIC_ROUTE_PREFIX = '/capstone/bddr/data/';
@@ -83,6 +86,35 @@ function cleanText(value, maxLength) {
 function cleanNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function normalizeOrigin(value) {
+  if (!value) return '';
+  try {
+    return new URL(value).origin.toLowerCase();
+  } catch (err) {
+    return '';
+  }
+}
+
+function getAllowedBrowserOrigins(request, env) {
+  const origins = new Set(DEFAULT_ALLOWED_BROWSER_ORIGINS);
+  const configured = cleanText(env.ALLOWED_BROWSER_ORIGINS || '', 1000);
+  configured.split(',').map(normalizeOrigin).filter(Boolean).forEach(origin => origins.add(origin));
+  origins.add(new URL(request.url).origin.toLowerCase());
+  return origins;
+}
+
+function isAllowedBrowserOrigin(request, env) {
+  const origin = normalizeOrigin(request.headers.get('origin'));
+  if (!origin) return true;
+  return getAllowedBrowserOrigins(request, env).has(origin);
+}
+
+function isBrowserGuardedPath(pathname) {
+  return pathname.startsWith('/api/') ||
+    pathname.startsWith(DATA_ROUTE_PREFIX) ||
+    pathname.startsWith(DATA_PUBLIC_ROUTE_PREFIX);
 }
 
 function generateToken(bytes) {
@@ -2150,7 +2182,14 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
+      if (isBrowserGuardedPath(url.pathname) && !isAllowedBrowserOrigin(request, env)) {
+        return json({ ok: false, error: 'Origin không được phép' }, 403);
+      }
       return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    if (isBrowserGuardedPath(url.pathname) && !isAllowedBrowserOrigin(request, env)) {
+      return json({ ok: false, error: 'Origin không được phép' }, 403);
     }
 
     const dataAsset = parseDataAssetPath(url.pathname);
