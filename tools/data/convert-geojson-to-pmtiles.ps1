@@ -1,9 +1,19 @@
-﻿param(
-    [string]$InputGeoJson = (Join-Path $PSScriptRoot '..\..\data\_archive\root\BDDR.geojson'),
-    [string]$OutputPmTiles = (Join-Path $PSScriptRoot '..\..\data\_archive\root\BDDR.pmtiles')
+param(
+    [string]$InputGeoJson,
+    [string]$OutputPmTiles
 )
 
 $ErrorActionPreference = 'Stop'
+
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$scriptRoot = [System.IO.Path]::GetFullPath($scriptRoot)
+
+if (-not $InputGeoJson) {
+    $InputGeoJson = Join-Path $scriptRoot '..\..\data\_archive\root\BDDR.geojson'
+}
+if (-not $OutputPmTiles) {
+    $OutputPmTiles = Join-Path $scriptRoot '..\..\data\_archive\root\BDDR.pmtiles'
+}
 
 if (-not (Test-Path -LiteralPath $InputGeoJson)) {
     throw "Khong tim thay GeoJSON: $InputGeoJson. Hay chay npm run convert:kmz truoc."
@@ -29,7 +39,7 @@ $mbtilesPath = Join-Path $dataDir $mbtilesName
 $outputName = Split-Path -Leaf $OutputPmTiles
 
 Write-Host "Dang chuan bi GeoJSONL cho tippecanoe ..."
-node (Join-Path $PSScriptRoot 'prepare-geojson-for-tippecanoe.js') $InputGeoJson $tempPath
+node (Join-Path $scriptRoot 'prepare-geojson-for-tippecanoe.js') $InputGeoJson $tempPath
 if ($LASTEXITCODE -ne 0) {
     throw "prepare-geojson-for-tippecanoe failed with exit code $LASTEXITCODE"
 }

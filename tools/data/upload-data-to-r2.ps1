@@ -1,11 +1,18 @@
 param(
-    [string]$DataRoot = (Join-Path $PSScriptRoot '..\..\data'),
+    [string]$DataRoot,
     [string]$Bucket = 'capstone',
     [string]$Prefix = 'bddr/data',
     [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
+
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$scriptRoot = [System.IO.Path]::GetFullPath($scriptRoot)
+
+if (-not $DataRoot) {
+    $DataRoot = Join-Path $scriptRoot '..\..\data'
+}
 
 function Get-ContentType {
     param([string]$Path)

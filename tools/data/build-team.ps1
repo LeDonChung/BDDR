@@ -2,12 +2,19 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Team,
 
-    [string]$DataRoot = (Join-Path $PSScriptRoot '..\..\data'),
+    [string]$DataRoot,
 
     [switch]$SkipPmtiles
 )
 
 $ErrorActionPreference = 'Stop'
+
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$scriptRoot = [System.IO.Path]::GetFullPath($scriptRoot)
+
+if (-not $DataRoot) {
+    $DataRoot = Join-Path $scriptRoot '..\..\data'
+}
 
 function Resolve-TeamFolder {
     param([string]$Value)
@@ -42,14 +49,14 @@ $pmtiles = Join-Path $teamDir 'BDDR.pmtiles'
 
 Write-Host "==> Build $teamFolder"
 Write-Host "KMZ: $($kmz.Name)"
-node (Join-Path $PSScriptRoot 'convert-kmz-to-geojson.js') $kmz.FullName $geojson
+node (Join-Path $scriptRoot 'convert-kmz-to-geojson.js') $kmz.FullName $geojson
 if ($LASTEXITCODE -ne 0) {
     throw "convert-kmz-to-geojson failed with exit code $LASTEXITCODE"
 }
 
 if ($dxf) {
     Write-Host "DXF: $($dxf.Name)"
-    node (Join-Path $PSScriptRoot 'convert-dxf-labels-to-geojson.js') $dxf.FullName $labels
+    node (Join-Path $scriptRoot 'convert-dxf-labels-to-geojson.js') $dxf.FullName $labels
     if ($LASTEXITCODE -ne 0) {
         throw "convert-dxf-labels-to-geojson failed with exit code $LASTEXITCODE"
     }
@@ -83,7 +90,7 @@ if ($dockerInfoExitCode -ne 0) {
     return
 }
 
-powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'convert-geojson-to-pmtiles.ps1') -InputGeoJson $geojson -OutputPmTiles $pmtiles
+powershell -ExecutionPolicy Bypass -File (Join-Path $scriptRoot 'convert-geojson-to-pmtiles.ps1') -InputGeoJson $geojson -OutputPmTiles $pmtiles
 if ($LASTEXITCODE -ne 0) {
     throw "convert-geojson-to-pmtiles failed with exit code $LASTEXITCODE"
 }

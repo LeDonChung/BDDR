@@ -1,13 +1,20 @@
 param(
-    [string]$DataRoot = (Join-Path $PSScriptRoot '..\..\data'),
+    [string]$DataRoot,
 
     [switch]$SkipPmtiles
 )
 
 $ErrorActionPreference = 'Stop'
 
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$scriptRoot = [System.IO.Path]::GetFullPath($scriptRoot)
+
+if (-not $DataRoot) {
+    $DataRoot = Join-Path $scriptRoot '..\..\data'
+}
+
 $DataRoot = [System.IO.Path]::GetFullPath($DataRoot)
-$buildTeam = Join-Path $PSScriptRoot 'build-team.ps1'
+$buildTeam = Join-Path $scriptRoot 'build-team.ps1'
 $teamDirs = Get-ChildItem -LiteralPath $DataRoot -Directory |
     Where-Object { $_.Name -eq 'main' -or $_.Name -match '^doi\d{2}$' } |
     Sort-Object Name
